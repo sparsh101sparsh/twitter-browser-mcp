@@ -56,6 +56,23 @@ describe("Media and Input Validation", () => {
     );
   });
 
+  test("validates multi-image attachments up to 4", () => {
+    const res2 = validateMediaPaths([imgPath, imgPath]);
+    assert.equal(res2.resolvedPaths.length, 2);
+    assert.equal(res2.hasImage, true);
+    assert.equal(res2.hasVideo, false);
+
+    const res4 = validateMediaPaths([imgPath, imgPath, imgPath, imgPath]);
+    assert.equal(res4.resolvedPaths.length, 4);
+    assert.equal(res4.hasImage, true);
+    assert.equal(res4.hasVideo, false);
+  });
+
+  test("rejects invalid path types", () => {
+    assert.throws(() => validateMediaPaths([null]), /Invalid media path entry/);
+    assert.throws(() => validateMediaPaths([123]), /Invalid media path entry/);
+  });
+
   test("rejects more than 4 images", () => {
     assert.throws(
       () => validateMediaPaths([imgPath, imgPath, imgPath, imgPath, imgPath]),

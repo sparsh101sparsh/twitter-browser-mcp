@@ -8,8 +8,11 @@ describe("RateLimiter and Pacing", () => {
     assert.equal(limiter.clampSearchLimit(10), 10);
     assert.equal(limiter.clampSearchLimit(50), 50);
     assert.equal(limiter.clampSearchLimit(100), 50);
+    assert.equal(limiter.clampSearchLimit(Infinity), 50);
     assert.equal(limiter.clampSearchLimit(0), 10);
     assert.equal(limiter.clampSearchLimit(-5), 10);
+    assert.equal(limiter.clampSearchLimit(NaN), 10);
+    assert.equal(limiter.clampSearchLimit(25.8), 25);
     assert.equal(limiter.clampSearchLimit(undefined), 10);
   });
 

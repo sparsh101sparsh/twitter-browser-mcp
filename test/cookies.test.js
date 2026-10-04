@@ -48,17 +48,32 @@ describe("Cookies utility", () => {
     const validation = validateCookies(validCookies);
     assert.equal(validation.valid, true);
     assert.equal(validation.missing.length, 0);
+    assert.equal(validation.expired.length, 0);
 
     const missingCookies = [{ name: "auth_token", value: "a" }];
     const invalidValidation = validateCookies(missingCookies);
     assert.equal(invalidValidation.valid, false);
     assert.deepEqual(invalidValidation.missing, ["ct0"]);
+
+    const expiredCookies = [
+      { name: "auth_token", value: "a", expires: 1000 },
+      { name: "ct0", value: "b", expires: 2000000000 },
+    ];
+    const expiredValidation = validateCookies(expiredCookies);
+    assert.equal(expiredValidation.valid, false);
+    assert.deepEqual(expiredValidation.expired, ["auth_token"]);
+  });
+
+  test("supplies default domain if omitted", () => {
+    const raw = [{ name: "foo", value: "bar" }];
+    const normalized = normalizeCookies(raw);
+    assert.equal(normalized[0].domain, ".x.com");
   });
 
   test("loads cookies from the default path", () => {
     const cookies = loadCookies();
     assert.ok(cookies.length > 0, "Should load at least one cookie");
     const val = validateCookies(cookies);
-    assert.ok(val.valid, "Default cookies file should have auth_token and ct0");
+    assert.ok(val.valid, "Default cookies file should have valid auth_token and ct0");
   });
 });

@@ -13,15 +13,19 @@ export class BrowserSessionManager {
   }
 
   public async getContext(): Promise<BrowserContext> {
-    if (this.context) {
+    if (this.context && this.browser && this.browser.isConnected()) {
       return this.context;
+    }
+
+    if (this.browser && !this.browser.isConnected()) {
+      await this.close();
     }
 
     if (this.isInitializing) {
       while (this.isInitializing) {
         await new Promise((res) => setTimeout(res, 100));
       }
-      if (this.context) return this.context;
+      if (this.context && this.browser && this.browser.isConnected()) return this.context;
     }
 
     this.isInitializing = true;
@@ -66,6 +70,9 @@ export class BrowserSessionManager {
       console.error(`[browser] Injected ${cookies.length} session cookies into browser context.`);
 
       return this.context;
+    } catch (err) {
+      await this.close();
+      throw err;
     } finally {
       this.isInitializing = false;
     }
@@ -79,7 +86,8 @@ export class BrowserSessionManager {
       releaseLock = resolve;
     });
 
-    await previousLock;
+    // Safely wait for previous lock even if it rejected
+    await previousLock.catch(() => {});
 
     let page: Page | null = null;
     try {

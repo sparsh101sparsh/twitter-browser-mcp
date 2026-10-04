@@ -3,8 +3,17 @@ import path from "node:path";
 import os from "node:os";
 import type { PlaywrightCookie } from "../types.js";
 
+export function expandHome(filepath: string): string {
+  if (filepath === "~") return os.homedir();
+  if (filepath.startsWith("~/") || filepath.startsWith("~\\")) {
+    return path.join(os.homedir(), filepath.slice(2));
+  }
+  return filepath;
+}
+
 export function getDefaultCookiePath(): string {
-  return process.env.TWITTER_COOKIES_PATH || path.join(os.homedir(), "Downloads", "x_com_cookies.json");
+  const p = process.env.TWITTER_COOKIES_PATH || path.join(os.homedir(), "Downloads", "x_com_cookies.json");
+  return expandHome(p);
 }
 
 export function normalizeCookies(rawCookies: any[]): PlaywrightCookie[] {
@@ -18,7 +27,7 @@ export function normalizeCookies(rawCookies: any[]): PlaywrightCookie[] {
       const cookie: PlaywrightCookie = {
         name: c.name,
         value: c.value,
-        domain: c.domain,
+        domain: c.domain || ".x.com",
         path: c.path || "/",
         httpOnly: !!c.httpOnly,
         secure: !!c.secure,
@@ -43,19 +52,35 @@ export function normalizeCookies(rawCookies: any[]): PlaywrightCookie[] {
     });
 }
 
-export function validateCookies(cookies: PlaywrightCookie[]): { valid: boolean; missing: string[] } {
-  const cookieNames = new Set(cookies.map((c) => c.name));
+export interface CookieValidationResult {
+  valid: boolean;
+  missing: string[];
+  expired: string[];
+}
+
+export function validateCookies(cookies: PlaywrightCookie[]): CookieValidationResult {
+  const nowSec = Date.now() / 1000;
+  const cookieMap = new Map(cookies.map((c) => [c.name, c]));
   const required = ["auth_token", "ct0"];
-  const missing = required.filter((name) => !cookieNames.has(name));
+  const missing = required.filter((name) => !cookieMap.has(name));
+  const expired: string[] = [];
+
+  for (const name of required) {
+    const c = cookieMap.get(name);
+    if (c && c.expires !== undefined && c.expires < nowSec) {
+      expired.push(name);
+    }
+  }
 
   return {
-    valid: missing.length === 0,
+    valid: missing.length === 0 && expired.length === 0,
     missing,
+    expired,
   };
 }
 
 export function loadCookies(customPath?: string): PlaywrightCookie[] {
-  const targetPath = customPath || getDefaultCookiePath();
+  const targetPath = expandHome(customPath || getDefaultCookiePath());
 
   if (!fs.existsSync(targetPath)) {
     throw new Error(
@@ -80,9 +105,21 @@ export function loadCookies(customPath?: string): PlaywrightCookie[] {
   const normalized = normalizeCookies(parsed);
   const validation = validateCookies(normalized);
   if (!validation.valid) {
-    console.error(
-      `[warning] Cookies file is missing essential auth cookies: ${validation.missing.join(", ")}. Session may not be authenticated.`
-    );
+    const problems: string[] = [];
+    if (validation.missing.length > 0) {
+      problems.push(`missing required auth cookies (${validation.missing.join(", ")})`);
+    }
+    if (validation.expired.length > 0) {
+      problems.push(`expired auth cookies (${validation.expired.join(", ")})`);
+    }
+    console.error(`[warning] Cookies validation issue: ${problems.join(", ")}`);
+    if (validation.missing.includes("auth_token") || validation.expired.includes("auth_token")) {
+      throw new Error(
+        `Twitter auth cookie 'auth_token' is ${
+          validation.missing.includes("auth_token") ? "missing" : "expired"
+        }. Please re-export cookies from a logged-in Twitter/X session.`
+      );
+    }
   }
 
   return normalized;

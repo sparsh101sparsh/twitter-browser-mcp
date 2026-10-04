@@ -37,6 +37,23 @@ describe("Guardrails Security Challenges", () => {
     );
   });
 
+  test("detects unauthenticated login flow URL", async () => {
+    const mockPage = {
+      url: () => "https://x.com/i/flow/login",
+      evaluate: async () => "",
+      $: async () => null,
+    };
+
+    await assert.rejects(
+      async () => checkSecurityChallenges(mockPage),
+      (err) => {
+        assert.ok(err instanceof TwitterSafetyError);
+        assert.equal(err.code, "UNAUTHENTICATED_SESSION");
+        return true;
+      }
+    );
+  });
+
   test("detects Arkose captcha iframe", async () => {
     const mockPage = {
       url: () => "https://x.com/home",

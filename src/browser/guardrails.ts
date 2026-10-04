@@ -24,7 +24,15 @@ export async function checkSecurityChallenges(page: Page): Promise<void> {
     );
   }
 
-  if (currentUrl.includes("/account/login_challenge") || currentUrl.includes("/i/flow/login")) {
+  if (currentUrl.includes("/i/flow/login")) {
+    throw new TwitterSafetyError(
+      `Unauthenticated session detected (redirected to ${currentUrl}). Your Twitter session cookies may be missing, expired, or invalid. Please re-export cookies from a logged-in Twitter/X session into ~/Downloads/x_com_cookies.json.`,
+      "UNAUTHENTICATED_SESSION",
+      currentUrl
+    );
+  }
+
+  if (currentUrl.includes("/account/login_challenge")) {
     throw new TwitterSafetyError(
       `Login checkpoint / security challenge detected at ${currentUrl}. Halting immediately per twitter-safe-use rules. Complete the challenge in a regular desktop browser.`,
       "LOGIN_CHALLENGE",

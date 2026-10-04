@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { expandHome } from "../utils/cookies.js";
 const SUPPORTED_IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const SUPPORTED_VIDEO_EXTS = new Set([".mp4", ".mov"]);
 export function validateMediaPaths(mediaPaths) {
@@ -13,7 +14,8 @@ export function validateMediaPaths(mediaPaths) {
         if (!rawPath || typeof rawPath !== "string") {
             throw new Error(`Invalid media path entry: ${rawPath}`);
         }
-        const resolved = path.resolve(rawPath);
+        const expanded = expandHome(rawPath);
+        const resolved = path.resolve(expanded);
         if (!fs.existsSync(resolved)) {
             throw new Error(`Media file does not exist: ${resolved}`);
         }
@@ -53,6 +55,7 @@ export async function attachMediaAndWait(page, mediaPaths, timeoutMs = 90000) {
     let isVideoProcessingFailed = false;
     let videoProcessingFailureReason = "";
     let isVideoProcessingComplete = false;
+    let hasAsyncProcessing = false;
     const responseHandler = async (res) => {
         const url = res.url();
         if (url.includes("upload") && (url.includes("media/upload.json") || url.includes("media/upload2.json"))) {
@@ -62,7 +65,10 @@ export async function attachMediaAndWait(page, mediaPaths, timeoutMs = 90000) {
                 if (data.processing_info) {
                     const state = data.processing_info.state;
                     console.error(`[media] Backend video processing state: ${state}`);
-                    if (state === "succeeded") {
+                    if (state === "pending" || state === "in_progress") {
+                        hasAsyncProcessing = true;
+                    }
+                    else if (state === "succeeded") {
                         isVideoProcessingComplete = true;
                     }
                     else if (state === "failed") {
@@ -85,38 +91,49 @@ export async function attachMediaAndWait(page, mediaPaths, timeoutMs = 90000) {
         console.error(`[media] Set input files on fileInput.`);
         // 3. Wait for upload and processing completion
         const startTime = Date.now();
-        let attachedPreviewFound = false;
         while (Date.now() - startTime < timeoutMs) {
             if (isVideoProcessingFailed) {
                 throw new Error(`Video processing failed on Twitter backend: ${videoProcessingFailureReason}`);
             }
-            // Check if preview/attachment element appears
-            if (!attachedPreviewFound) {
-                const hasAttachment = await page.$("[data-testid='attachments'], [aria-label='Remove media'], [data-testid='tweetPhoto'], video");
-                if (hasAttachment) {
-                    attachedPreviewFound = true;
-                    console.error(`[media] Attachment preview detected in DOM.`);
-                }
+            // Check for inline upload failure alerts
+            const errorAlert = await page
+                .locator("[role='alert'], [role='alertdialog'], [data-testid='toast']")
+                .first()
+                .innerText()
+                .catch(() => "");
+            if (/failed to upload|could not be uploaded|file is not supported|error uploading/i.test(errorAlert)) {
+                throw new Error(`Media upload failed: ${errorAlert}`);
             }
+            // Check attachments container and items count
+            const attachmentsEl = await page.$("[data-testid='attachments']");
+            const removeButtons = await page.$$("[aria-label='Remove media']");
+            const photos = await page.$$("[data-testid='tweetPhoto']");
+            const videoEl = await page.$("video");
+            const attachmentProgressBar = attachmentsEl ? await attachmentsEl.$("[role='progressbar']") : null;
             // Check post button state
             const postBtn = page.locator("[data-testid='tweetButton'], [data-testid='tweetButtonInline']").first();
             const isVisible = await postBtn.isVisible().catch(() => false);
             const ariaDisabled = isVisible ? await postBtn.getAttribute("aria-disabled") : "true";
             const isButtonReady = isVisible && ariaDisabled !== "true";
             if (hasVideo) {
-                // For video: check that attachment preview is found, post button is ready,
-                // and any attachment-specific progress bar is gone.
-                const attachmentsEl = await page.$("[data-testid='attachments']");
-                const attachmentProgressBar = attachmentsEl ? await attachmentsEl.$("[role='progressbar']") : null;
-                if (attachedPreviewFound && !attachmentProgressBar && (isButtonReady || isVideoProcessingComplete)) {
+                const hasVideoPreview = !!videoEl || !!attachmentsEl || removeButtons.length > 0;
+                // If async transcoding is underway, wait until succeeded
+                if (hasAsyncProcessing && !isVideoProcessingComplete) {
+                    console.error("[media] Waiting for async video transcoding completion...");
+                    await page.waitForTimeout(1000);
+                    continue;
+                }
+                if (hasVideoPreview && !attachmentProgressBar && isButtonReady) {
                     console.error(`[media] Video upload and backend processing complete!`);
                     return;
                 }
             }
             else {
-                // For images: preview found and button ready
-                if (attachedPreviewFound && isButtonReady) {
-                    console.error(`[media] Image attachments uploaded and ready.`);
+                // For images: verify all images have rendered their remove buttons / preview items
+                const currentCount = Math.max(removeButtons.length, photos.length);
+                const allImagesAttached = currentCount >= resolvedPaths.length;
+                if (allImagesAttached && !attachmentProgressBar && isButtonReady) {
+                    console.error(`[media] All ${resolvedPaths.length} image attachments uploaded and ready.`);
                     return;
                 }
             }

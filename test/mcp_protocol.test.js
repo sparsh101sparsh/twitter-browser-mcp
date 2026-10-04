@@ -50,6 +50,16 @@ describe("MCP Protocol Implementation", () => {
       const getProfileTool = toolsResult.tools.find((t) => t.name === "get_profile");
       assert.ok(getProfileTool);
       assert.ok(getProfileTool.inputSchema.properties.username);
+
+      // Verify tool call validation via MCP protocol
+      const errorCall = await client.callTool({
+        name: "post_tweet",
+        arguments: {},
+      });
+      assert.equal(errorCall.isError, true);
+      assert.ok(
+        errorCall.content[0].text.includes("Must provide either text content or at least one media path")
+      );
     } finally {
       await client.close().catch(() => {});
     }
