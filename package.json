@@ -1,0 +1,35 @@
+{
+  "name": "twitter-browser-mcp",
+  "version": "1.0.0",
+  "description": "Local browser-automated Twitter/X MCP server using Playwright and session cookies",
+  "main": "build/index.js",
+  "type": "module",
+  "bin": {
+    "twitter-browser-mcp": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x build/index.js",
+    "watch": "tsc --watch",
+    "start": "node build/index.js",
+    "test": "node --test test/*.test.js",
+    "test:unit": "node --test test/cookies.test.js test/validation.test.js test/rate_limiter.test.js test/guardrails.test.js test/mcp_protocol.test.js",
+    "test:e2e": "node test/e2e_live.test.js"
+  },
+  "keywords": [
+    "twitter",
+    "mcp",
+    "browser",
+    "playwright",
+    "modelcontextprotocol"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.1",
+    "playwright": "^1.55.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2"
+  }
+}
