@@ -4,6 +4,7 @@ import os from "node:os";
 import type { PlaywrightCookie } from "../types.js";
 
 export function expandHome(filepath: string): string {
+  if (!filepath || typeof filepath !== "string") return filepath;
   if (filepath === "~") return os.homedir();
   if (filepath.startsWith("~/") || filepath.startsWith("~\\")) {
     return path.join(os.homedir(), filepath.slice(2));
@@ -24,17 +25,23 @@ export function normalizeCookies(rawCookies: any[]): PlaywrightCookie[] {
   return rawCookies
     .filter((c) => c && typeof c === "object" && typeof c.name === "string" && typeof c.value === "string")
     .map((c) => {
+      let domain = c.domain || ".x.com";
+      if (domain.includes("twitter.com")) {
+        domain = domain.replace("twitter.com", "x.com");
+      }
+
       const cookie: PlaywrightCookie = {
         name: c.name,
         value: c.value,
-        domain: c.domain || ".x.com",
+        domain,
         path: c.path || "/",
         httpOnly: !!c.httpOnly,
         secure: !!c.secure,
       };
 
-      if (c.expirationDate && !c.session) {
-        cookie.expires = Number(c.expirationDate);
+      const rawExp = c.expirationDate ?? c.expires ?? c.expiry;
+      if (rawExp && !c.session) {
+        cookie.expires = Number(rawExp);
       }
 
       if (c.sameSite && typeof c.sameSite === "string") {

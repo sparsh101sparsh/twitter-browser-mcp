@@ -70,6 +70,26 @@ describe("Cookies utility", () => {
     assert.equal(normalized[0].domain, ".x.com");
   });
 
+  test("maps twitter.com domains to x.com", () => {
+    const raw = [
+      { name: "auth_token", value: "tok", domain: ".twitter.com" },
+      { name: "ct0", value: "csrf", domain: "twitter.com" },
+    ];
+    const normalized = normalizeCookies(raw);
+    assert.equal(normalized[0].domain, ".x.com");
+    assert.equal(normalized[1].domain, "x.com");
+  });
+
+  test("supports expires and expiry property aliases", () => {
+    const raw = [
+      { name: "auth_token", value: "tok", expires: 1900000000 },
+      { name: "ct0", value: "csrf", expiry: 1900000000 },
+    ];
+    const normalized = normalizeCookies(raw);
+    assert.equal(normalized[0].expires, 1900000000);
+    assert.equal(normalized[1].expires, 1900000000);
+  });
+
   test("loads cookies from the default path", () => {
     const cookies = loadCookies();
     assert.ok(cookies.length > 0, "Should load at least one cookie");

@@ -103,7 +103,7 @@ export class BrowserSessionManager {
 }
 export const defaultSessionManager = new BrowserSessionManager();
 // Register cleanup listeners
-process.on("exit", () => {
+process.on("beforeExit", () => {
     defaultSessionManager.close().catch(() => { });
 });
 process.on("SIGINT", () => {

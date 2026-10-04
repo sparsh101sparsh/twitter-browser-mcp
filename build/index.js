@@ -82,7 +82,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 // Register Tool Execution Handler
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
+    const { name } = request.params;
+    const args = (request.params.arguments || {});
     try {
         switch (name) {
             case "post_tweet": {

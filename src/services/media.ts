@@ -10,16 +10,22 @@ export interface ValidatedMedia {
   resolvedPaths: string[];
   hasVideo: boolean;
   hasImage: boolean;
+  hasGif: boolean;
 }
 
 export function validateMediaPaths(mediaPaths?: string[]): ValidatedMedia {
+  if (mediaPaths !== undefined && !Array.isArray(mediaPaths)) {
+    throw new Error("media_paths must be an array of file path strings.");
+  }
+
   if (!mediaPaths || mediaPaths.length === 0) {
-    return { resolvedPaths: [], hasVideo: false, hasImage: false };
+    return { resolvedPaths: [], hasVideo: false, hasImage: false, hasGif: false };
   }
 
   const resolvedPaths: string[] = [];
   let hasVideo = false;
   let hasImage = false;
+  let hasGif = false;
 
   for (const rawPath of mediaPaths) {
     if (!rawPath || typeof rawPath !== "string") {
@@ -37,9 +43,14 @@ export function validateMediaPaths(mediaPaths?: string[]): ValidatedMedia {
       throw new Error(`Media path is not a regular file: ${resolved}`);
     }
 
+    if (stat.size === 0) {
+      throw new Error(`Media file is empty (0 bytes): ${resolved}`);
+    }
+
     const ext = path.extname(resolved).toLowerCase();
     const isImg = SUPPORTED_IMAGE_EXTS.has(ext);
     const isVid = SUPPORTED_VIDEO_EXTS.has(ext);
+    const isSingleGif = ext === ".gif";
 
     if (!isImg && !isVid) {
       throw new Error(
@@ -47,14 +58,36 @@ export function validateMediaPaths(mediaPaths?: string[]): ValidatedMedia {
       );
     }
 
-    if (isVid) hasVideo = true;
-    if (isImg) hasImage = true;
+    if (isVid) {
+      if (stat.size > 512 * 1024 * 1024) {
+        throw new Error(`Video file exceeds Twitter's 512MB limit: ${resolved}`);
+      }
+      hasVideo = true;
+    } else if (isSingleGif) {
+      if (stat.size > 15 * 1024 * 1024) {
+        throw new Error(`GIF file exceeds Twitter's 15MB limit: ${resolved}`);
+      }
+      hasGif = true;
+    } else {
+      if (stat.size > 15 * 1024 * 1024) {
+        throw new Error(`Image file exceeds Twitter's 15MB limit: ${resolved}`);
+      }
+      hasImage = true;
+    }
 
     resolvedPaths.push(resolved);
   }
 
-  if (hasVideo && hasImage) {
-    throw new Error("Twitter does not allow attaching videos and images in the same post.");
+  if (hasGif && resolvedPaths.length > 1) {
+    throw new Error("Twitter only supports 1 GIF attachment per post, and GIFs cannot be combined with photos or videos.");
+  }
+
+  if (hasVideo && (hasImage || hasGif)) {
+    throw new Error("Twitter does not allow attaching videos and images/GIFs in the same post.");
+  }
+
+  if (hasGif && hasImage) {
+    throw new Error("Twitter does not allow combining GIFs with static photos.");
   }
 
   if (hasVideo && resolvedPaths.length > 1) {
@@ -69,7 +102,7 @@ export function validateMediaPaths(mediaPaths?: string[]): ValidatedMedia {
     );
   }
 
-  return { resolvedPaths, hasVideo, hasImage };
+  return { resolvedPaths, hasVideo, hasImage, hasGif };
 }
 
 export async function attachMediaAndWait(
@@ -87,6 +120,7 @@ export async function attachMediaAndWait(
   let videoProcessingFailureReason = "";
   let isVideoProcessingComplete = false;
   let hasAsyncProcessing = false;
+  let isUploadFinalized = false;
 
   const responseHandler = async (res: any) => {
     const url = res.url();
@@ -94,17 +128,24 @@ export async function attachMediaAndWait(
       try {
         const text = await res.text();
         const data = JSON.parse(text);
-        if (data.processing_info) {
-          const state = data.processing_info.state;
-          console.error(`[media] Backend video processing state: ${state}`);
-          if (state === "pending" || state === "in_progress") {
-            hasAsyncProcessing = true;
-          } else if (state === "succeeded") {
+        if (data.media_id || data.media_id_string) {
+          if (data.processing_info) {
+            const state = data.processing_info.state;
+            console.error(`[media] Backend video processing state: ${state}`);
+            if (state === "pending" || state === "in_progress") {
+              hasAsyncProcessing = true;
+            } else if (state === "succeeded") {
+              isUploadFinalized = true;
+              isVideoProcessingComplete = true;
+            } else if (state === "failed") {
+              isVideoProcessingFailed = true;
+              videoProcessingFailureReason =
+                data.processing_info.error?.message || "Unknown processing error";
+            }
+          } else {
+            // Immediate finalize without async transcoding
+            isUploadFinalized = true;
             isVideoProcessingComplete = true;
-          } else if (state === "failed") {
-            isVideoProcessingFailed = true;
-            videoProcessingFailureReason =
-              data.processing_info.error?.message || "Unknown processing error";
           }
         }
       } catch (_) {}
@@ -146,13 +187,24 @@ export async function attachMediaAndWait(
 
       // Check attachments container and items count
       const attachmentsEl = await page.$("[data-testid='attachments']");
-      const removeButtons = await page.$$("[aria-label='Remove media']");
+      const removeButtons = await page.$$(
+        "[aria-label*='Remove'], [data-testid='removeMedia'], [aria-label*='Dismiss']"
+      );
       const photos = await page.$$("[data-testid='tweetPhoto']");
       const videoEl = await page.$("video");
-      const attachmentProgressBar = attachmentsEl ? await attachmentsEl.$("[role='progressbar']") : null;
+      const attachmentProgressBar = attachmentsEl
+        ? await attachmentsEl.$(
+            "[role='progressbar'], [data-testid*='progress'], [data-testid*='spinner'], [aria-valuenow]"
+          )
+        : null;
 
-      // Check post button state
-      const postBtn = page.locator("[data-testid='tweetButton'], [data-testid='tweetButtonInline']").first();
+      // Check post button state (scoped to modal dialog if open)
+      const dialog = page.locator("[role='dialog']").first();
+      const isDialogVisible = await dialog.isVisible().catch(() => false);
+      const postBtn = isDialogVisible
+        ? dialog.locator("[data-testid='tweetButton']").first()
+        : page.locator("[data-testid='tweetButton'], [data-testid='tweetButtonInline']").first();
+
       const isVisible = await postBtn.isVisible().catch(() => false);
       const ariaDisabled = isVisible ? await postBtn.getAttribute("aria-disabled") : "true";
       const isButtonReady = isVisible && ariaDisabled !== "true";
@@ -166,17 +218,23 @@ export async function attachMediaAndWait(
           continue;
         }
 
-        if (hasVideoPreview && !attachmentProgressBar && isButtonReady) {
+        // Require DOM preview, no progress indicator, upload finalized/transcoded, and Post button ready
+        if (
+          hasVideoPreview &&
+          !attachmentProgressBar &&
+          (isUploadFinalized || isVideoProcessingComplete) &&
+          isButtonReady
+        ) {
           console.error(`[media] Video upload and backend processing complete!`);
           return;
         }
       } else {
-        // For images: verify all images have rendered their remove buttons / preview items
+        // For images/GIF: verify all items have rendered their remove buttons / preview items
         const currentCount = Math.max(removeButtons.length, photos.length);
-        const allImagesAttached = currentCount >= resolvedPaths.length;
+        const allItemsAttached = currentCount >= resolvedPaths.length;
 
-        if (allImagesAttached && !attachmentProgressBar && isButtonReady) {
-          console.error(`[media] All ${resolvedPaths.length} image attachments uploaded and ready.`);
+        if (allItemsAttached && !attachmentProgressBar && isButtonReady) {
+          console.error(`[media] All ${resolvedPaths.length} media attachment(s) uploaded and ready.`);
           return;
         }
       }

@@ -1,5 +1,5 @@
 import { defaultSessionManager } from "../browser/session.js";
-import { checkSecurityChallenges } from "../browser/guardrails.js";
+import { checkSecurityChallenges, TwitterSafetyError } from "../browser/guardrails.js";
 import { validateMediaPaths, attachMediaAndWait } from "./media.js";
 import { defaultRateLimiter } from "../utils/rate_limiter.js";
 export class TwitterService {
@@ -8,6 +8,7 @@ export class TwitterService {
         this.sessionManager = sessionManager || defaultSessionManager;
     }
     async postTweet(args) {
+        args = args || {};
         const text = args.text?.trim() || "";
         const mediaPaths = args.media_paths || [];
         if (!text && mediaPaths.length === 0) {
@@ -44,10 +45,12 @@ export class TwitterService {
             }
             // Check guardrails again after input & media
             await checkSecurityChallenges(page);
-            // Locate Post button (modal or inline)
-            const postButton = page
-                .locator("[data-testid='tweetButton'], [data-testid='tweetButtonInline']")
-                .first();
+            // Locate Post button (scope to modal if present)
+            const composeModal = page.locator("[role='dialog']").first();
+            const isModal = await composeModal.isVisible().catch(() => false);
+            const postButton = isModal
+                ? composeModal.locator("[data-testid='tweetButton']").first()
+                : page.locator("[data-testid='tweetButton'], [data-testid='tweetButtonInline']").first();
             await postButton.waitFor({ state: "visible", timeout: 10000 });
             // Check if button is disabled
             const ariaDisabled = await postButton.getAttribute("aria-disabled");
@@ -79,9 +82,9 @@ export class TwitterService {
                         }
                     }
                 }
-                else {
-                    // If no toast, ensure compose modal closed
-                    await page.waitForTimeout(3000);
+                // Wait for compose modal to close if not already closed
+                if (isModal) {
+                    await composeModal.waitFor({ state: "hidden", timeout: 10000 }).catch(() => { });
                 }
                 // Check for error alert dialogs
                 const alertDialog = page.locator("[role='alertdialog'], [role='alert']").first();
@@ -92,7 +95,6 @@ export class TwitterService {
                     }
                 }
                 // Verify that compose modal actually closed
-                const composeModal = page.locator("[role='dialog']").first();
                 const isModalStillOpen = await composeModal.isVisible().catch(() => false);
                 const isButtonStillVisible = await postButton.isVisible().catch(() => false);
                 if (isModalStillOpen && isButtonStillVisible) {
@@ -100,8 +102,9 @@ export class TwitterService {
                 }
             }
             catch (err) {
-                if (err.message?.includes("Failed to post tweet"))
+                if (err instanceof TwitterSafetyError || err.message?.includes("Failed to post tweet")) {
                     throw err;
+                }
                 console.error(`[twitter] Post completion check: ${err.message}`);
             }
             console.error("[twitter] Tweet posted successfully!");
@@ -116,6 +119,7 @@ export class TwitterService {
         });
     }
     async searchTweets(args) {
+        args = args || {};
         const query = args.query?.trim();
         if (!query) {
             throw new Error("Search query cannot be empty.");
@@ -136,7 +140,7 @@ export class TwitterService {
                     const text = document.body ? document.body.innerText : "";
                     const hasEmpty = text.includes("No results for") ||
                         text.includes("Try searching for") ||
-                        !!document.querySelector("[data-testid='empty_state']");
+                        !!document.querySelector("[data-testid='empty_state'], [data-testid='emptyState']");
                     return hasTweet || hasEmpty;
                 }, { timeout: 15000 });
             }
@@ -144,10 +148,16 @@ export class TwitterService {
                 console.error("[twitter] Search selector wait timed out, continuing to parse available content...");
             }
             await checkSecurityChallenges(page);
-            // Early return if empty state is detected
+            // Early return ONLY if no tweets exist AND empty state is detected
             const isEmptyState = await page.evaluate(() => {
+                const hasTweet = !!document.querySelector("article[data-testid='tweet']");
+                if (hasTweet)
+                    return false;
                 const text = document.body ? document.body.innerText : "";
-                return text.includes("No results for") || text.includes("Try searching for something else");
+                const emptyEl = document.querySelector("[data-testid='empty_state'], [data-testid='emptyState']");
+                return (!!emptyEl ||
+                    text.includes("No results for") ||
+                    text.includes("Try searching for something else"));
             });
             if (isEmptyState) {
                 console.error(`[twitter] No results found for query '${query}'`);
@@ -164,24 +174,42 @@ export class TwitterService {
             while (tweetsMap.size < limit && scrollAttempts <= maxScrolls) {
                 const extracted = await page.evaluate(() => {
                     const articles = Array.from(document.querySelectorAll("article[data-testid='tweet']"));
-                    return articles.map((art) => {
-                        const userEl = art.querySelector("[data-testid='User-Name']");
+                    return articles
+                        .filter((art) => {
+                        const htmlArt = art;
+                        const isPromoted = !!art.querySelector("[data-testid='icon-promoted'], [aria-label*='Promoted']") ||
+                            (htmlArt.innerText || "").includes("Promoted\n") ||
+                            (htmlArt.innerText || "").endsWith("\nPromoted");
+                        return !isPromoted;
+                    })
+                        .map((art) => {
+                        const userEl = art.querySelector("[data-testid='User-Name'], [data-testid='UserName']");
                         const userLines = userEl ? (userEl.innerText || "").split("\n").filter(Boolean) : [];
                         const timeEl = art.querySelector("time");
                         const timeLink = timeEl ? timeEl.closest("a") : null;
-                        const statusLink = art.querySelector("a[href*='/status/']");
                         const textEl = art.querySelector("[data-testid='tweetText']");
                         const replyBtn = art.querySelector("[data-testid='reply']");
                         const retweetBtn = art.querySelector("[data-testid='retweet']");
                         const likeBtn = art.querySelector("[data-testid='like']");
                         const hasPhotos = !!art.querySelector("[data-testid='tweetPhoto']");
                         const hasVideo = !!art.querySelector("video");
-                        const url = timeLink ? timeLink.href : statusLink ? statusLink.href : undefined;
-                        const match = url ? url.match(/\/status\/(\d+)/) : null;
-                        const id = match ? match[1] : undefined;
                         const handleLine = userLines.find((l) => l.startsWith("@"));
                         const author_handle = handleLine || (userLines[1] ? `@${userLines[1].replace(/^@/, "")}` : "");
                         const author_name = userLines[0] && !userLines[0].startsWith("@") ? userLines[0] : userLines[0] || "";
+                        const cleanHandle = author_handle.replace(/^@/, "");
+                        const userStatusLink = cleanHandle
+                            ? art.querySelector(`a[href*='/${cleanHandle}/status/']`)
+                            : null;
+                        const generalStatusLink = art.querySelector("a[href*='/status/']");
+                        const url = timeLink
+                            ? timeLink.href
+                            : userStatusLink
+                                ? userStatusLink.href
+                                : generalStatusLink
+                                    ? generalStatusLink.href
+                                    : undefined;
+                        const match = url ? url.match(/\/status\/(\d+)/) : null;
+                        const id = match ? match[1] : undefined;
                         return {
                             id,
                             author_name,
@@ -228,6 +256,7 @@ export class TwitterService {
         });
     }
     async getProfile(args) {
+        args = args || {};
         const rawUsername = args.username?.trim();
         if (!rawUsername) {
             throw new Error("Username cannot be empty.");
@@ -241,7 +270,7 @@ export class TwitterService {
             await checkSecurityChallenges(page);
             // Check if profile exists
             try {
-                await page.waitForSelector("[data-testid='UserName'], [data-testid='empty_state']", {
+                await page.waitForSelector("[data-testid='UserName'], [data-testid='empty_state'], [data-testid='emptyState']", {
                     timeout: 15000,
                 });
             }
@@ -264,13 +293,19 @@ export class TwitterService {
                 const handleLine = lines.find((l) => l.startsWith("@"));
                 const handle = handleLine || (lines[1] ? `@${lines[1].replace(/^@/, "")}` : "");
                 const name = lines[0] && !lines[0].startsWith("@") ? lines[0] : "";
+                const urlAnchor = urlEl ? urlEl.querySelector("a") : null;
+                const fullUrl = urlAnchor
+                    ? urlAnchor.href || urlAnchor.getAttribute("title") || urlEl?.innerText
+                    : urlEl
+                        ? urlEl.innerText
+                        : undefined;
                 return {
                     hasNameEl: !!nameEl,
                     name,
                     handle,
                     bio: bioEl ? bioEl.innerText : undefined,
                     location: locationEl ? locationEl.innerText : undefined,
-                    url: urlEl ? urlEl.innerText : undefined,
+                    url: fullUrl,
                     joined: joinEl ? joinEl.innerText : undefined,
                     following: followingEl ? followingEl.innerText : undefined,
                     followers: followersEl ? followersEl.innerText : undefined,
@@ -278,11 +313,15 @@ export class TwitterService {
                 };
             });
             if (!profileData.hasNameEl || (!profileData.name && !profileData.handle)) {
-                const pageText = await page.evaluate(() => (document.body ? document.body.innerText : ""));
-                if (/account suspended/i.test(pageText)) {
+                const statusText = await page.evaluate(() => {
+                    const emptyEl = document.querySelector("[data-testid='empty_state'], [data-testid='emptyState']");
+                    const body = document.body ? document.body.innerText : "";
+                    return (emptyEl ? emptyEl.innerText + "\n" : "") + body;
+                });
+                if (/account suspended/i.test(statusText)) {
                     throw new Error(`Twitter user '@${cleanUsername}' is suspended.`);
                 }
-                if (/this account doesn[’']t exist|this page doesn[’']t exist|account doesn[’']t exist/i.test(pageText)) {
+                if (/this account doesn[’']t exist|this page doesn[’']t exist|account doesn[’']t exist/i.test(statusText)) {
                     throw new Error(`Twitter user '@${cleanUsername}' does not exist.`);
                 }
                 throw new Error(`Twitter user '@${cleanUsername}' could not be found or profile failed to load.`);

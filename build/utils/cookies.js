@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 export function expandHome(filepath) {
+    if (!filepath || typeof filepath !== "string")
+        return filepath;
     if (filepath === "~")
         return os.homedir();
     if (filepath.startsWith("~/") || filepath.startsWith("~\\")) {
@@ -20,16 +22,21 @@ export function normalizeCookies(rawCookies) {
     return rawCookies
         .filter((c) => c && typeof c === "object" && typeof c.name === "string" && typeof c.value === "string")
         .map((c) => {
+        let domain = c.domain || ".x.com";
+        if (domain.includes("twitter.com")) {
+            domain = domain.replace("twitter.com", "x.com");
+        }
         const cookie = {
             name: c.name,
             value: c.value,
-            domain: c.domain || ".x.com",
+            domain,
             path: c.path || "/",
             httpOnly: !!c.httpOnly,
             secure: !!c.secure,
         };
-        if (c.expirationDate && !c.session) {
-            cookie.expires = Number(c.expirationDate);
+        const rawExp = c.expirationDate ?? c.expires ?? c.expiry;
+        if (rawExp && !c.session) {
+            cookie.expires = Number(rawExp);
         }
         if (c.sameSite && typeof c.sameSite === "string") {
             const s = c.sameSite.toLowerCase();

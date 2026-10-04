@@ -21,6 +21,7 @@ export class TwitterService {
   }
 
   public async postTweet(args: PostTweetArgs): Promise<PostTweetResult> {
+    args = args || {};
     const text = args.text?.trim() || "";
     const mediaPaths = args.media_paths || [];
 
@@ -70,10 +71,13 @@ export class TwitterService {
       // Check guardrails again after input & media
       await checkSecurityChallenges(page);
 
-      // Locate Post button (modal or inline)
-      const postButton = page
-        .locator("[data-testid='tweetButton'], [data-testid='tweetButtonInline']")
-        .first();
+      // Locate Post button (scope to modal if present)
+      const composeModal = page.locator("[role='dialog']").first();
+      const isModal = await composeModal.isVisible().catch(() => false);
+      const postButton = isModal
+        ? composeModal.locator("[data-testid='tweetButton']").first()
+        : page.locator("[data-testid='tweetButton'], [data-testid='tweetButtonInline']").first();
+
       await postButton.waitFor({ state: "visible", timeout: 10000 });
 
       // Check if button is disabled
@@ -112,9 +116,11 @@ export class TwitterService {
               if (match) tweetId = match[1];
             }
           }
-        } else {
-          // If no toast, ensure compose modal closed
-          await page.waitForTimeout(3000);
+        }
+
+        // Wait for compose modal to close if not already closed
+        if (isModal) {
+          await composeModal.waitFor({ state: "hidden", timeout: 10000 }).catch(() => {});
         }
 
         // Check for error alert dialogs
@@ -127,14 +133,15 @@ export class TwitterService {
         }
 
         // Verify that compose modal actually closed
-        const composeModal = page.locator("[role='dialog']").first();
         const isModalStillOpen = await composeModal.isVisible().catch(() => false);
         const isButtonStillVisible = await postButton.isVisible().catch(() => false);
         if (isModalStillOpen && isButtonStillVisible) {
           throw new Error("Failed to post tweet: compose modal remained open after clicking Post.");
         }
       } catch (err: any) {
-        if (err.message?.includes("Failed to post tweet")) throw err;
+        if (err instanceof TwitterSafetyError || err.message?.includes("Failed to post tweet")) {
+          throw err;
+        }
         console.error(`[twitter] Post completion check: ${err.message}`);
       }
 
@@ -151,6 +158,7 @@ export class TwitterService {
   }
 
   public async searchTweets(args: SearchTweetsArgs): Promise<SearchTweetsResult> {
+    args = args || {};
     const query = args.query?.trim();
     if (!query) {
       throw new Error("Search query cannot be empty.");
@@ -179,7 +187,7 @@ export class TwitterService {
             const hasEmpty =
               text.includes("No results for") ||
               text.includes("Try searching for") ||
-              !!document.querySelector("[data-testid='empty_state']");
+              !!document.querySelector("[data-testid='empty_state'], [data-testid='emptyState']");
             return hasTweet || hasEmpty;
           },
           { timeout: 15000 }
@@ -190,10 +198,17 @@ export class TwitterService {
 
       await checkSecurityChallenges(page);
 
-      // Early return if empty state is detected
+      // Early return ONLY if no tweets exist AND empty state is detected
       const isEmptyState = await page.evaluate(() => {
+        const hasTweet = !!document.querySelector("article[data-testid='tweet']");
+        if (hasTweet) return false;
         const text = document.body ? document.body.innerText : "";
-        return text.includes("No results for") || text.includes("Try searching for something else");
+        const emptyEl = document.querySelector("[data-testid='empty_state'], [data-testid='emptyState']");
+        return (
+          !!emptyEl ||
+          text.includes("No results for") ||
+          text.includes("Try searching for something else")
+        );
       });
 
       if (isEmptyState) {
@@ -213,42 +228,62 @@ export class TwitterService {
       while (tweetsMap.size < limit && scrollAttempts <= maxScrolls) {
         const extracted = await page.evaluate(() => {
           const articles = Array.from(document.querySelectorAll("article[data-testid='tweet']"));
-          return articles.map((art) => {
-            const userEl = art.querySelector("[data-testid='User-Name']") as HTMLElement | null;
-            const userLines = userEl ? (userEl.innerText || "").split("\n").filter(Boolean) : [];
-            const timeEl = art.querySelector("time");
-            const timeLink = timeEl ? timeEl.closest("a") : null;
-            const statusLink = art.querySelector("a[href*='/status/']") as HTMLAnchorElement | null;
-            const textEl = art.querySelector("[data-testid='tweetText']") as HTMLElement | null;
+          return articles
+            .filter((art) => {
+              const htmlArt = art as HTMLElement;
+              const isPromoted =
+                !!art.querySelector("[data-testid='icon-promoted'], [aria-label*='Promoted']") ||
+                (htmlArt.innerText || "").includes("Promoted\n") ||
+                (htmlArt.innerText || "").endsWith("\nPromoted");
+              return !isPromoted;
+            })
+            .map((art) => {
+              const userEl = art.querySelector("[data-testid='User-Name'], [data-testid='UserName']") as HTMLElement | null;
+              const userLines = userEl ? (userEl.innerText || "").split("\n").filter(Boolean) : [];
+              const timeEl = art.querySelector("time");
+              const timeLink = timeEl ? timeEl.closest("a") : null;
+              const textEl = art.querySelector("[data-testid='tweetText']") as HTMLElement | null;
 
-            const replyBtn = art.querySelector("[data-testid='reply']");
-            const retweetBtn = art.querySelector("[data-testid='retweet']");
-            const likeBtn = art.querySelector("[data-testid='like']");
+              const replyBtn = art.querySelector("[data-testid='reply']");
+              const retweetBtn = art.querySelector("[data-testid='retweet']");
+              const likeBtn = art.querySelector("[data-testid='like']");
 
-            const hasPhotos = !!art.querySelector("[data-testid='tweetPhoto']");
-            const hasVideo = !!art.querySelector("video");
+              const hasPhotos = !!art.querySelector("[data-testid='tweetPhoto']");
+              const hasVideo = !!art.querySelector("video");
 
-            const url = timeLink ? timeLink.href : statusLink ? statusLink.href : undefined;
-            const match = url ? url.match(/\/status\/(\d+)/) : null;
-            const id = match ? match[1] : undefined;
+              const handleLine = userLines.find((l) => l.startsWith("@"));
+              const author_handle = handleLine || (userLines[1] ? `@${userLines[1].replace(/^@/, "")}` : "");
+              const author_name = userLines[0] && !userLines[0].startsWith("@") ? userLines[0] : userLines[0] || "";
 
-            const handleLine = userLines.find((l) => l.startsWith("@"));
-            const author_handle = handleLine || (userLines[1] ? `@${userLines[1].replace(/^@/, "")}` : "");
-            const author_name = userLines[0] && !userLines[0].startsWith("@") ? userLines[0] : userLines[0] || "";
+              const cleanHandle = author_handle.replace(/^@/, "");
+              const userStatusLink = cleanHandle
+                ? (art.querySelector(`a[href*='/${cleanHandle}/status/']`) as HTMLAnchorElement | null)
+                : null;
+              const generalStatusLink = art.querySelector("a[href*='/status/']") as HTMLAnchorElement | null;
 
-            return {
-              id,
-              author_name,
-              author_handle,
-              timestamp: timeEl ? timeEl.getAttribute("datetime") || undefined : undefined,
-              url,
-              text: textEl ? textEl.innerText || "" : "",
-              replies: replyBtn ? replyBtn.getAttribute("aria-label") || undefined : undefined,
-              retweets: retweetBtn ? retweetBtn.getAttribute("aria-label") || undefined : undefined,
-              likes: likeBtn ? likeBtn.getAttribute("aria-label") || undefined : undefined,
-              has_media: hasPhotos || hasVideo,
-            };
-          });
+              const url = timeLink
+                ? timeLink.href
+                : userStatusLink
+                ? userStatusLink.href
+                : generalStatusLink
+                ? generalStatusLink.href
+                : undefined;
+              const match = url ? url.match(/\/status\/(\d+)/) : null;
+              const id = match ? match[1] : undefined;
+
+              return {
+                id,
+                author_name,
+                author_handle,
+                timestamp: timeEl ? timeEl.getAttribute("datetime") || undefined : undefined,
+                url,
+                text: textEl ? textEl.innerText || "" : "",
+                replies: replyBtn ? replyBtn.getAttribute("aria-label") || undefined : undefined,
+                retweets: retweetBtn ? retweetBtn.getAttribute("aria-label") || undefined : undefined,
+                likes: likeBtn ? likeBtn.getAttribute("aria-label") || undefined : undefined,
+                has_media: hasPhotos || hasVideo,
+              };
+            });
         });
 
         const prevCount = tweetsMap.size;
@@ -287,6 +322,7 @@ export class TwitterService {
   }
 
   public async getProfile(args: GetProfileArgs): Promise<TwitterProfile> {
+    args = args || {};
     const rawUsername = args.username?.trim();
     if (!rawUsername) {
       throw new Error("Username cannot be empty.");
@@ -304,7 +340,7 @@ export class TwitterService {
 
       // Check if profile exists
       try {
-        await page.waitForSelector("[data-testid='UserName'], [data-testid='empty_state']", {
+        await page.waitForSelector("[data-testid='UserName'], [data-testid='empty_state'], [data-testid='emptyState']", {
           timeout: 15000,
         });
       } catch (_) {}
@@ -331,13 +367,20 @@ export class TwitterService {
         const handle = handleLine || (lines[1] ? `@${lines[1].replace(/^@/, "")}` : "");
         const name = lines[0] && !lines[0].startsWith("@") ? lines[0] : "";
 
+        const urlAnchor = urlEl ? (urlEl.querySelector("a") as HTMLAnchorElement | null) : null;
+        const fullUrl = urlAnchor
+          ? urlAnchor.href || urlAnchor.getAttribute("title") || urlEl?.innerText
+          : urlEl
+          ? urlEl.innerText
+          : undefined;
+
         return {
           hasNameEl: !!nameEl,
           name,
           handle,
           bio: bioEl ? bioEl.innerText : undefined,
           location: locationEl ? locationEl.innerText : undefined,
-          url: urlEl ? urlEl.innerText : undefined,
+          url: fullUrl,
           joined: joinEl ? joinEl.innerText : undefined,
           following: followingEl ? followingEl.innerText : undefined,
           followers: followersEl ? followersEl.innerText : undefined,
@@ -346,13 +389,18 @@ export class TwitterService {
       });
 
       if (!profileData.hasNameEl || (!profileData.name && !profileData.handle)) {
-        const pageText = await page.evaluate(() => (document.body ? document.body.innerText : ""));
-        if (/account suspended/i.test(pageText)) {
+        const statusText = await page.evaluate(() => {
+          const emptyEl = document.querySelector("[data-testid='empty_state'], [data-testid='emptyState']") as HTMLElement | null;
+          const body = document.body ? document.body.innerText : "";
+          return (emptyEl ? emptyEl.innerText + "\n" : "") + body;
+        });
+
+        if (/account suspended/i.test(statusText)) {
           throw new Error(`Twitter user '@${cleanUsername}' is suspended.`);
         }
         if (
           /this account doesn[’']t exist|this page doesn[’']t exist|account doesn[’']t exist/i.test(
-            pageText
+            statusText
           )
         ) {
           throw new Error(`Twitter user '@${cleanUsername}' does not exist.`);

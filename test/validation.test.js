@@ -79,4 +79,38 @@ describe("Media and Input Validation", () => {
       /maximum of 4 image attachments/i
     );
   });
+
+  test("rejects non-array media_paths input", () => {
+    assert.throws(() => validateMediaPaths("fixtures/test_image.png"), /media_paths must be an array/);
+    assert.throws(() => validateMediaPaths({ path: imgPath }), /media_paths must be an array/);
+  });
+
+  test("rejects empty 0-byte media file", () => {
+    const emptyPath = path.resolve("fixtures/test_empty.png");
+    assert.throws(() => validateMediaPaths([emptyPath]), /Media file is empty \(0 bytes\)/);
+  });
+
+  test("validates single GIF attachment", () => {
+    const gifPath = path.resolve("fixtures/test_gif.gif");
+    const res = validateMediaPaths([gifPath]);
+    assert.equal(res.resolvedPaths.length, 1);
+    assert.equal(res.hasGif, true);
+    assert.equal(res.hasVideo, false);
+    assert.equal(res.hasImage, false);
+  });
+
+  test("rejects multiple GIF attachments", () => {
+    const gifPath = path.resolve("fixtures/test_gif.gif");
+    assert.throws(() => validateMediaPaths([gifPath, gifPath]), /only supports 1 GIF attachment/i);
+  });
+
+  test("rejects combining GIF and static image", () => {
+    const gifPath = path.resolve("fixtures/test_gif.gif");
+    assert.throws(() => validateMediaPaths([gifPath, imgPath]), /cannot be combined with photos/i);
+  });
+
+  test("rejects combining GIF and video", () => {
+    const gifPath = path.resolve("fixtures/test_gif.gif");
+    assert.throws(() => validateMediaPaths([gifPath, vidPath]), /cannot be combined with photos or videos/i);
+  });
 });

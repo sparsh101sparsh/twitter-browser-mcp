@@ -52,6 +52,38 @@ describe("Guardrails Security Challenges", () => {
         return true;
       }
     );
+
+    const mockPage2 = {
+      url: () => "https://x.com/login",
+      evaluate: async () => "",
+      $: async () => null,
+    };
+
+    await assert.rejects(
+      async () => checkSecurityChallenges(mockPage2),
+      (err) => {
+        assert.ok(err instanceof TwitterSafetyError);
+        assert.equal(err.code, "UNAUTHENTICATED_SESSION");
+        return true;
+      }
+    );
+  });
+
+  test("detects login verification 2FA URL", async () => {
+    const mockPage = {
+      url: () => "https://x.com/account/login_verification",
+      evaluate: async () => "",
+      $: async () => null,
+    };
+
+    await assert.rejects(
+      async () => checkSecurityChallenges(mockPage),
+      (err) => {
+        assert.ok(err instanceof TwitterSafetyError);
+        assert.equal(err.code, "LOGIN_CHALLENGE");
+        return true;
+      }
+    );
   });
 
   test("detects Arkose captcha iframe", async () => {

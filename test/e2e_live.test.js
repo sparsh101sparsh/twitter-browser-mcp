@@ -38,6 +38,12 @@ describe("Live Twitter E2E Verification", () => {
     assert.deepEqual(results.tweets, []);
   });
 
+  test("searchTweets returns matching tweets when query or body contains 'No results for'", async () => {
+    const results = await defaultTwitterService.searchTweets({ query: '"No results for"', limit: 2 });
+    assert.ok(results.count > 0, "Should return tweets rather than falsely flagging empty state");
+    assert.ok(results.tweets.length > 0);
+  });
+
   test("postTweet with plain text successfully creates a tweet", async () => {
     const uniqueText = `Automated MCP Plain Text: ${Date.now()}`;
     const result = await defaultTwitterService.postTweet({ text: uniqueText });

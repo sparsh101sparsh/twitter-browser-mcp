@@ -51,7 +51,7 @@ describe("MCP Protocol Implementation", () => {
       assert.ok(getProfileTool);
       assert.ok(getProfileTool.inputSchema.properties.username);
 
-      // Verify tool call validation via MCP protocol
+      // Verify tool call validation via MCP protocol with empty or omitted arguments
       const errorCall = await client.callTool({
         name: "post_tweet",
         arguments: {},
@@ -60,6 +60,26 @@ describe("MCP Protocol Implementation", () => {
       assert.ok(
         errorCall.content[0].text.includes("Must provide either text content or at least one media path")
       );
+
+      const errorCallNoArgs = await client.callTool({
+        name: "post_tweet",
+      });
+      assert.equal(errorCallNoArgs.isError, true);
+      assert.ok(
+        errorCallNoArgs.content[0].text.includes("Must provide either text content or at least one media path")
+      );
+
+      const searchNoArgs = await client.callTool({
+        name: "search_tweets",
+      });
+      assert.equal(searchNoArgs.isError, true);
+      assert.ok(searchNoArgs.content[0].text.includes("Search query cannot be empty"));
+
+      const profileNoArgs = await client.callTool({
+        name: "get_profile",
+      });
+      assert.equal(profileNoArgs.isError, true);
+      assert.ok(profileNoArgs.content[0].text.includes("Username cannot be empty"));
     } finally {
       await client.close().catch(() => {});
     }
