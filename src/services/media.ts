@@ -28,7 +28,7 @@ export function validateMediaPaths(mediaPaths?: string[]): ValidatedMedia {
   let hasGif = false;
 
   for (const rawPath of mediaPaths) {
-    if (!rawPath || typeof rawPath !== "string") {
+    if (!rawPath || typeof rawPath !== "string" || !rawPath.trim()) {
       throw new Error(`Invalid media path entry: ${rawPath}`);
     }
 
@@ -116,8 +116,8 @@ export async function attachMediaAndWait(
   console.error(`[media] Attaching ${resolvedPaths.length} media file(s) (hasVideo: ${hasVideo})...`);
 
   // Track upload network states
-  let isVideoProcessingFailed = false;
-  let videoProcessingFailureReason = "";
+  let isMediaUploadFailed = false;
+  let mediaUploadFailureReason = "";
   let isVideoProcessingComplete = false;
   let hasAsyncProcessing = false;
   let isUploadFinalized = false;
@@ -126,24 +126,53 @@ export async function attachMediaAndWait(
     const url = res.url();
     if (url.includes("upload") && (url.includes("media/upload.json") || url.includes("media/upload2.json"))) {
       try {
+        const req = res.request();
+        const postData = (req.postData() || "").toUpperCase();
+        const urlUpper = url.toUpperCase();
+        const isInit = urlUpper.includes("COMMAND=INIT") || postData.includes("COMMAND=INIT");
+        const isFinalize = urlUpper.includes("COMMAND=FINALIZE") || postData.includes("COMMAND=FINALIZE");
+        const isStatus = urlUpper.includes("COMMAND=STATUS") || postData.includes("COMMAND=STATUS");
+        const isChunked = isInit || isFinalize || isStatus;
+
         const text = await res.text();
         const data = JSON.parse(text);
+
+        // Check for Twitter backend errors
+        if (data.errors && data.errors.length > 0) {
+          isMediaUploadFailed = true;
+          mediaUploadFailureReason = data.errors.map((e: any) => e.message || JSON.stringify(e)).join("; ");
+          return;
+        }
+
+        if (res.status() >= 400) {
+          isMediaUploadFailed = true;
+          mediaUploadFailureReason = `Media upload rejected with HTTP ${res.status()}`;
+          return;
+        }
+
         if (data.media_id || data.media_id_string) {
+          if (isInit) {
+            console.error(`[media] Chunked upload initialized for media_id ${data.media_id_string || data.media_id}`);
+            return;
+          }
+
           if (data.processing_info) {
             const state = data.processing_info.state;
             console.error(`[media] Backend video processing state: ${state}`);
             if (state === "pending" || state === "in_progress") {
               hasAsyncProcessing = true;
+              isUploadFinalized = true;
+              isVideoProcessingComplete = false;
             } else if (state === "succeeded") {
               isUploadFinalized = true;
               isVideoProcessingComplete = true;
             } else if (state === "failed") {
-              isVideoProcessingFailed = true;
-              videoProcessingFailureReason =
-                data.processing_info.error?.message || "Unknown processing error";
+              isMediaUploadFailed = true;
+              mediaUploadFailureReason =
+                data.processing_info.error?.message || "Video transcoding failed";
             }
-          } else {
-            // Immediate finalize without async transcoding
+          } else if (isFinalize || !isChunked) {
+            // Immediate finalize without async transcoding, or single-step image upload
             isUploadFinalized = true;
             isVideoProcessingComplete = true;
           }
@@ -167,8 +196,8 @@ export async function attachMediaAndWait(
     const startTime = Date.now();
 
     while (Date.now() - startTime < timeoutMs) {
-      if (isVideoProcessingFailed) {
-        throw new Error(`Video processing failed on Twitter backend: ${videoProcessingFailureReason}`);
+      if (isMediaUploadFailed) {
+        throw new Error(`Media upload failed on Twitter backend: ${mediaUploadFailureReason}`);
       }
 
       // Check for inline upload failure alerts
@@ -186,7 +215,7 @@ export async function attachMediaAndWait(
       }
 
       // Check attachments container and items count
-      const attachmentsEl = await page.$("[data-testid='attachments']");
+      const attachmentsEl = await page.$("[data-testid='attachments'], div[aria-label*='Media'], div[data-testid='mediaContainer']");
       const removeButtons = await page.$$(
         "[aria-label*='Remove'], [data-testid='removeMedia'], [aria-label*='Dismiss']"
       );
@@ -202,7 +231,7 @@ export async function attachMediaAndWait(
       const dialog = page.locator("[role='dialog']").first();
       const isDialogVisible = await dialog.isVisible().catch(() => false);
       const postBtn = isDialogVisible
-        ? dialog.locator("[data-testid='tweetButton']").first()
+        ? dialog.locator("[data-testid='tweetButton'], [data-testid='tweetButtonInline']").first()
         : page.locator("[data-testid='tweetButton'], [data-testid='tweetButtonInline']").first();
 
       const isVisible = await postBtn.isVisible().catch(() => false);
@@ -222,7 +251,7 @@ export async function attachMediaAndWait(
         if (
           hasVideoPreview &&
           !attachmentProgressBar &&
-          (isUploadFinalized || isVideoProcessingComplete) &&
+          (isVideoProcessingComplete || (isUploadFinalized && !hasAsyncProcessing)) &&
           isButtonReady
         ) {
           console.error(`[media] Video upload and backend processing complete!`);

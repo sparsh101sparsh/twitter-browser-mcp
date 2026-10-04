@@ -23,7 +23,15 @@ export function normalizeCookies(rawCookies: any[]): PlaywrightCookie[] {
   }
 
   return rawCookies
-    .filter((c) => c && typeof c === "object" && typeof c.name === "string" && typeof c.value === "string")
+    .filter(
+      (c) =>
+        c &&
+        typeof c === "object" &&
+        typeof c.name === "string" &&
+        c.name.trim() !== "" &&
+        typeof c.value === "string" &&
+        c.value.trim() !== ""
+    )
     .map((c) => {
       let domain = c.domain || ".x.com";
       if (domain.includes("twitter.com")) {
@@ -31,7 +39,7 @@ export function normalizeCookies(rawCookies: any[]): PlaywrightCookie[] {
       }
 
       const cookie: PlaywrightCookie = {
-        name: c.name,
+        name: c.name.trim(),
         value: c.value,
         domain,
         path: c.path || "/",
@@ -40,14 +48,28 @@ export function normalizeCookies(rawCookies: any[]): PlaywrightCookie[] {
       };
 
       const rawExp = c.expirationDate ?? c.expires ?? c.expiry;
-      if (rawExp && !c.session) {
-        cookie.expires = Number(rawExp);
+      if (rawExp !== undefined && rawExp !== null && !c.session) {
+        let expNum = Number(rawExp);
+        if (isNaN(expNum) && typeof rawExp === "string") {
+          const parsed = Date.parse(rawExp);
+          if (!isNaN(parsed)) {
+            expNum = Math.floor(parsed / 1000);
+          }
+        }
+        if (!isNaN(expNum) && isFinite(expNum)) {
+          // If timestamp is in milliseconds (> 100 billion), convert to seconds
+          if (expNum > 1e11) {
+            expNum = Math.floor(expNum / 1000);
+          }
+          cookie.expires = expNum;
+        }
       }
 
       if (c.sameSite && typeof c.sameSite === "string") {
         const s = c.sameSite.toLowerCase();
         if (s === "no_restriction" || s === "none") {
           cookie.sameSite = "None";
+          cookie.secure = true; // SameSite=None requires Secure per cookie spec
         } else if (s === "lax") {
           cookie.sameSite = "Lax";
         } else if (s === "strict") {

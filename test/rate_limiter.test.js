@@ -14,6 +14,9 @@ describe("RateLimiter and Pacing", () => {
     assert.equal(limiter.clampSearchLimit(NaN), 10);
     assert.equal(limiter.clampSearchLimit(25.8), 25);
     assert.equal(limiter.clampSearchLimit(undefined), 10);
+    assert.equal(limiter.clampSearchLimit("25"), 25);
+    assert.equal(limiter.clampSearchLimit("100"), 50);
+    assert.equal(limiter.clampSearchLimit("invalid"), 10);
   });
 
   test("enforces pacing delay between rapid actions", async () => {
@@ -23,5 +26,25 @@ describe("RateLimiter and Pacing", () => {
     await limiter.enforcePacing("action2");
     const elapsed = Date.now() - start;
     assert.ok(elapsed >= 140, `Elapsed time should be at least ~150ms, was ${elapsed}ms`);
+  });
+
+  test("serializes concurrent enforcePacing calls and respects recordActionCompleted", async () => {
+    const limiter = new RateLimiter({ minIntervalMs: 100 });
+    const start = Date.now();
+
+    // Call two enforcePacing concurrently
+    const p1 = limiter.enforcePacing("c1");
+    const p2 = limiter.enforcePacing("c2");
+    await Promise.all([p1, p2]);
+
+    const elapsed = Date.now() - start;
+    assert.ok(elapsed >= 90, `Concurrent calls should be serialized by pacing queue, was ${elapsed}ms`);
+
+    // Record action finished now
+    limiter.recordActionCompleted();
+    const t3Start = Date.now();
+    await limiter.enforcePacing("c3");
+    const t3Elapsed = Date.now() - t3Start;
+    assert.ok(t3Elapsed >= 90, `c3 should wait for pacing gap after recordActionCompleted, was ${t3Elapsed}ms`);
   });
 });

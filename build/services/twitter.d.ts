@@ -1,5 +1,6 @@
 import { BrowserSessionManager } from "../browser/session.js";
 import type { PostTweetArgs, PostTweetResult, SearchTweetsArgs, SearchTweetsResult, GetProfileArgs, TwitterProfile } from "../types.js";
+export declare function calculateTweetLength(text: string): number;
 export declare class TwitterService {
     private sessionManager;
     constructor(sessionManager?: BrowserSessionManager);

@@ -80,6 +80,22 @@ describe("MCP Protocol Implementation", () => {
       });
       assert.equal(profileNoArgs.isError, true);
       assert.ok(profileNoArgs.content[0].text.includes("Username cannot be empty"));
+
+      // Verify '@' username is rejected cleanly
+      const profileAtOnly = await client.callTool({
+        name: "get_profile",
+        arguments: { username: "@" },
+      });
+      assert.equal(profileAtOnly.isError, true);
+      assert.ok(profileAtOnly.content[0].text.includes("Username cannot be empty"));
+
+      // Verify 280 character limit validation
+      const overLimitCall = await client.callTool({
+        name: "post_tweet",
+        arguments: { text: "x".repeat(281) },
+      });
+      assert.equal(overLimitCall.isError, true);
+      assert.ok(overLimitCall.content[0].text.includes("Tweet exceeds 280 character limit"));
     } finally {
       await client.close().catch(() => {});
     }

@@ -90,6 +90,29 @@ describe("Cookies utility", () => {
     assert.equal(normalized[1].expires, 1900000000);
   });
 
+  test("parses ISO date strings and converts millisecond timestamps", () => {
+    const raw = [
+      { name: "auth_token", value: "tok", expires: "2028-01-01T00:00:00.000Z" },
+      { name: "ct0", value: "csrf", expires: 1893456000000 }, // ms
+    ];
+    const normalized = normalizeCookies(raw);
+    assert.equal(normalized[0].expires, Math.floor(Date.parse("2028-01-01T00:00:00.000Z") / 1000));
+    assert.equal(normalized[1].expires, 1893456000);
+  });
+
+  test("enforces secure=true for SameSite=None and filters empty cookie values", () => {
+    const raw = [
+      { name: "auth_token", value: "tok", sameSite: "none", secure: false },
+      { name: "empty_val", value: "   " },
+      { name: "   ", value: "empty_name" },
+    ];
+    const normalized = normalizeCookies(raw);
+    assert.equal(normalized.length, 1);
+    assert.equal(normalized[0].name, "auth_token");
+    assert.equal(normalized[0].sameSite, "None");
+    assert.equal(normalized[0].secure, true);
+  });
+
   test("loads cookies from the default path", () => {
     const cookies = loadCookies();
     assert.ok(cookies.length > 0, "Should load at least one cookie");

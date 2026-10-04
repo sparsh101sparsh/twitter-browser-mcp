@@ -4,6 +4,7 @@ export class RateLimiter {
   private maxSearchResults: number;
   private recentActions: number[] = [];
   private maxActionsPerMinute: number;
+  private pacingQueue: Promise<void> = Promise.resolve();
 
   constructor(options?: { minIntervalMs?: number; maxSearchResults?: number; maxActionsPerMinute?: number }) {
     this.minIntervalMs = options?.minIntervalMs ?? Number(process.env.TWITTER_PACING_MS || 2500);
@@ -11,12 +12,16 @@ export class RateLimiter {
     this.maxActionsPerMinute = options?.maxActionsPerMinute ?? 12;
   }
 
-  public clampSearchLimit(limit?: number): number {
+  public clampSearchLimit(limit?: any): number {
     const defaultLimit = 10;
-    if (limit === undefined || limit === null || isNaN(limit)) {
+    if (limit === undefined || limit === null) {
       return defaultLimit;
     }
-    const val = Math.floor(limit);
+    const num = Number(limit);
+    if (isNaN(num)) {
+      return defaultLimit;
+    }
+    const val = Math.floor(num);
     if (val <= 0) return defaultLimit;
     if (val > this.maxSearchResults) {
       console.error(
@@ -28,29 +33,46 @@ export class RateLimiter {
   }
 
   public async enforcePacing(actionName: string): Promise<void> {
-    const now = Date.now();
+    // Chain through pacing queue so concurrent invocations wait sequentially
+    const previous = this.pacingQueue;
+    let releaseQueue: () => void = () => {};
+    this.pacingQueue = new Promise<void>((resolve) => {
+      releaseQueue = resolve;
+    });
 
-    // Clean up actions older than 60 seconds
-    this.recentActions = this.recentActions.filter((t) => now - t < 60000);
+    await previous.catch(() => {});
 
-    if (this.recentActions.length >= this.maxActionsPerMinute) {
-      const oldestInWindow = this.recentActions[0];
-      const waitTime = 60000 - (now - oldestInWindow) + 500;
-      console.error(
-        `[rate_limiter] High action frequency detected (${this.recentActions.length} in 60s). Pacing pause: ${Math.round(waitTime / 1000)}s for action '${actionName}'`
-      );
-      await this.sleep(waitTime);
+    try {
+      const now = Date.now();
+
+      // Clean up actions older than 60 seconds
+      this.recentActions = this.recentActions.filter((t) => now - t < 60000);
+
+      if (this.recentActions.length >= this.maxActionsPerMinute) {
+        const oldestInWindow = this.recentActions[0];
+        const waitTime = 60000 - (now - oldestInWindow) + 500;
+        console.error(
+          `[rate_limiter] High action frequency detected (${this.recentActions.length} in 60s). Pacing pause: ${Math.round(waitTime / 1000)}s for action '${actionName}'`
+        );
+        await this.sleep(waitTime);
+      }
+
+      const elapsed = Date.now() - this.lastActionTime;
+      if (elapsed < this.minIntervalMs) {
+        const waitMs = this.minIntervalMs - elapsed;
+        console.error(`[rate_limiter] Pacing gap for ${actionName}: waiting ${waitMs}ms`);
+        await this.sleep(waitMs);
+      }
+
+      this.lastActionTime = Date.now();
+      this.recentActions.push(this.lastActionTime);
+    } finally {
+      releaseQueue();
     }
+  }
 
-    const elapsed = Date.now() - this.lastActionTime;
-    if (elapsed < this.minIntervalMs) {
-      const waitMs = this.minIntervalMs - elapsed;
-      console.error(`[rate_limiter] Pacing gap for ${actionName}: waiting ${waitMs}ms`);
-      await this.sleep(waitMs);
-    }
-
+  public recordActionCompleted(): void {
     this.lastActionTime = Date.now();
-    this.recentActions.push(this.lastActionTime);
   }
 
   private sleep(ms: number): Promise<void> {

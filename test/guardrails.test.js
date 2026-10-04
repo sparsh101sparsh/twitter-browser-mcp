@@ -106,6 +106,36 @@ describe("Guardrails Security Challenges", () => {
     );
   });
 
+  test("detects checkpoint and confirm_password URLs", async () => {
+    const mockPage1 = {
+      url: () => "https://x.com/i/flow/checkpoint",
+      evaluate: async () => "",
+      $: async () => null,
+    };
+    await assert.rejects(
+      async () => checkSecurityChallenges(mockPage1),
+      (err) => {
+        assert.ok(err instanceof TwitterSafetyError);
+        assert.equal(err.code, "LOGIN_CHALLENGE");
+        return true;
+      }
+    );
+
+    const mockPage2 = {
+      url: () => "https://x.com/account/confirm_password",
+      evaluate: async () => "",
+      $: async () => null,
+    };
+    await assert.rejects(
+      async () => checkSecurityChallenges(mockPage2),
+      (err) => {
+        assert.ok(err instanceof TwitterSafetyError);
+        assert.equal(err.code, "LOGIN_CHALLENGE");
+        return true;
+      }
+    );
+  });
+
   test("passes on clean URL and page", async () => {
     const mockPage = {
       url: () => "https://x.com/home",

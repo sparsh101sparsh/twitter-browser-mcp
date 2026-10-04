@@ -2,6 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { validateMediaPaths } from "../build/services/media.js";
+import { calculateTweetLength } from "../build/services/twitter.js";
 
 describe("Media and Input Validation", () => {
   const imgPath = path.resolve("fixtures/test_image.png");
@@ -112,5 +113,28 @@ describe("Media and Input Validation", () => {
   test("rejects combining GIF and video", () => {
     const gifPath = path.resolve("fixtures/test_gif.gif");
     assert.throws(() => validateMediaPaths([gifPath, vidPath]), /cannot be combined with photos or videos/i);
+  });
+
+  test("rejects empty or whitespace-only media path entry", () => {
+    assert.throws(() => validateMediaPaths(["   "]), /Invalid media path entry/);
+    assert.throws(() => validateMediaPaths([""]), /Invalid media path entry/);
+  });
+
+  test("calculates tweet character length with URLs and emojis correctly", () => {
+    // Plain text
+    assert.equal(calculateTweetLength("Hello World"), 11);
+    assert.equal(calculateTweetLength(""), 0);
+
+    // Emojis counted by code points
+    assert.equal(calculateTweetLength("Hello 🚀"), 7);
+
+    // URLs counted as 23 characters regardless of length
+    const longUrl = "https://example.com/very/long/url/path/that/has/more/than/one/hundred/characters/index.html";
+    assert.equal(calculateTweetLength(longUrl), 23);
+
+    // Multiple URLs + text
+    const multiUrlText = `Check ${longUrl} and ${longUrl} out!`;
+    // "Check " (6) + 23 + " and " (5) + 23 + " out!" (5) = 62
+    assert.equal(calculateTweetLength(multiUrlText), 62);
   });
 });

@@ -16,7 +16,9 @@ export async function checkSecurityChallenges(page) {
     }
     if (currentUrl.includes("/account/login_challenge") ||
         currentUrl.includes("/account/login_verification") ||
-        currentUrl.includes("/i/flow/two-factor-auth")) {
+        currentUrl.includes("/i/flow/two-factor-auth") ||
+        currentUrl.includes("/checkpoint") ||
+        currentUrl.includes("/confirm_password")) {
         throw new TwitterSafetyError(`Login checkpoint / security challenge detected at ${currentUrl}. Halting immediately per twitter-safe-use rules. Complete the challenge in a regular desktop browser.`, "LOGIN_CHALLENGE", currentUrl);
     }
     if (currentUrl.includes("/i/flow/login") ||
@@ -43,8 +45,8 @@ export async function checkSecurityChallenges(page) {
         if (/rate limit exceeded/i.test(pageText)) {
             throw new TwitterSafetyError(`Twitter rate limit encountered on page ${currentUrl}. Halting operation to prevent account flagging.`, "RATE_LIMITED", currentUrl);
         }
-        // Check for Arkose Captcha iframe
-        const hasCaptcha = await page.$("iframe[src*='arkoselabs'], iframe[src*='funcaptcha']");
+        // Check for Arkose Captcha iframe or challenge container
+        const hasCaptcha = await page.$("iframe[src*='arkoselabs'], iframe[src*='funcaptcha'], iframe[title*='arkose' i], iframe[title*='verification' i], div#arkose, div[data-testid*='arkose']");
         if (hasCaptcha) {
             throw new TwitterSafetyError(`Arkose Captcha challenge detected on ${currentUrl}. Automated bypass is prohibited by twitter-safe-use. Complete the challenge in a desktop browser.`, "CAPTCHA_CHALLENGE", currentUrl);
         }

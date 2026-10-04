@@ -126,3 +126,9 @@ process.on("SIGINT", () => {
 process.on("SIGTERM", () => {
   defaultSessionManager.close().then(() => process.exit(0)).catch(() => process.exit(0));
 });
+process.on("SIGHUP", () => {
+  defaultSessionManager.close().then(() => process.exit(0)).catch(() => process.exit(0));
+});
+process.stdin.on("close", () => {
+  defaultSessionManager.close().then(() => process.exit(0)).catch(() => process.exit(0));
+});
