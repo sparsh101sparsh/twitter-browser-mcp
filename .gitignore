@@ -1,0 +1,8 @@
+node_modules/
+*.log
+.DS_Store
+*.env
+.env
+x_com_cookies.json
+*cookie*.json
+.agents/
