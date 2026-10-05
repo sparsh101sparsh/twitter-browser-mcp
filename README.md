@@ -1,4 +1,4 @@
-# Twitter / X Browser Model Context Protocol (MCP) Server
+# Twitter / X Browser MCP Server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![MCP Protocol](https://img.shields.io/badge/MCP-1.18.1-brightgreen.svg)](https://modelcontextprotocol.io)
@@ -6,153 +6,122 @@
 [![Language: TypeScript](https://img.shields.io/badge/Language-TypeScript%205.9-blue.svg)](https://www.typescriptlang.org)
 [![Tests: Passing](https://img.shields.io/badge/Tests-39%2F39%20Passing-success.svg)](test/)
 
-A production-grade, local, browser-automated Model Context Protocol (MCP) server for Twitter / X. It connects Large Language Model (LLM) agents and client environments (such as Antigravity, Claude Desktop, Cursor, and Windsurf) to Twitter without requiring official Twitter Developer API keys, subscriptions, or credit cards.
+A clean, free, browser-automated Model Context Protocol (MCP) server that lets your AI assistant interact with Twitter / X.
 
-The server operates via Playwright browser automation using local session cookies, enabling full text posting, media attachments (images, GIFs, and videos with backend transcode detection), search extraction, and user profile inspection.
+You do **not** need a Twitter Developer account, you do **not** need to pay $100 per month for API tiers, and you do **not** need to enter any credit card details. 
+
+The server runs locally on your computer. It uses Playwright to open a private headless browser in the background, loads your exported login cookies, and performs actions on x.com just like a person sitting at a keyboard.
 
 ---
 
 ## Table of Contents
 
-1. [Architectural Overview](#architectural-overview)
-   - [System Topology](#system-topology)
-   - [Media Processing Pipeline](#media-processing-pipeline)
-2. [Prerequisites](#prerequisites)
-3. [Step-by-Step Cookie Extraction Guide](#step-by-step-cookie-extraction-guide)
-   - [Method A: Using Chrome / Brave Developer Tools (Manual)](#method-a-using-chrome--brave-developer-tools-manual)
-   - [Method B: Using a Browser Extension (One-Click JSON Export)](#method-b-using-a-browser-extension-one-click-json-export)
+1. [How It Works](#how-it-works)
+2. [What Account Details Do You Need?](#what-account-details-do-you-need)
+3. [How to Extract Your Cookies (Step-by-Step)](#how-to-extract-your-cookies-step-by-step)
+   - [Method 1: Fast Export Using a Browser Extension (Recommended)](#method-1-fast-export-using-a-browser-extension-recommended)
+   - [Method 2: Manual Export Using Browser Developer Tools](#method-2-manual-export-using-browser-developer-tools)
 4. [Installation and Build](#installation-and-build)
-5. [Client Configuration](#client-configuration)
-   - [Configuration for Google Antigravity](#1-configuration-for-google-antigravity)
-   - [Configuration for Claude Desktop](#2-configuration-for-claude-desktop)
-   - [Configuration for Cursor IDE](#3-configuration-for-cursor-ide)
-   - [Configuration for Windsurf / Generic Stdio Clients](#4-configuration-for-windsurf--generic-stdio-clients)
-6. [MCP Tools Reference](#mcp-tools-reference)
-   - [`post_tweet`](#tool-post_tweet)
-   - [`search_tweets`](#tool-search_tweets)
-   - [`get_profile`](#tool-get_profile)
-7. [Environment Variables Reference](#environment-variables-reference)
-8. [Account Safety and Anti-Ban Hygiene](#account-safety-and-anti-ban-hygiene)
-   - [Antigravity Safe-Use Skill (`skills/twitter-safe-use/`)](#antigravity-safe-use-skill)
+5. [Client Setup Guides](#client-setup-guides)
+   - [Setup in Google Antigravity](#1-setup-in-google-antigravity)
+   - [Setup in Claude Desktop](#2-setup-in-claude-desktop)
+   - [Setup in Cursor IDE](#3-setup-in-cursor-ide)
+   - [Setup in OpenAI Codex / Custom Agent Runners](#4-setup-in-openai-codex--custom-agent-runners)
+   - [Setup in Windsurf](#5-setup-in-windsurf)
+6. [Available Tools and How to Use Them](#available-tools-and-how-to-use-them)
+   - [Posting a Tweet or Media (`post_tweet`)](#1-post_tweet)
+   - [Searching Tweets (`search_tweets`)](#2-search_tweets)
+   - [Looking up a Profile (`get_profile`)](#3-get_profile)
+7. [System Architecture and Workflow Diagrams](#system-architecture-and-workflow-diagrams)
+   - [High-Level Request Architecture](#high-level-request-architecture)
+   - [Video and Media Upload Lifecycle](#video-and-media-upload-lifecycle)
+   - [Rate Limiter and Anti-Bot Pacing Queue](#rate-limiter-and-anti-bot-pacing-queue)
+8. [Keeping Your Account Safe (Anti-Ban Rules)](#keeping-your-account-safe-anti-ban-rules)
+   - [The Included Antigravity Skill](#the-included-antigravity-skill)
 9. [Verification and Testing](#verification-and-testing)
-10. [Troubleshooting and Diagnostic Runbook](#troubleshooting-and-diagnostic-runbook)
+10. [Troubleshooting Guide](#troubleshooting-guide)
 11. [License](#license)
 
 ---
 
-## Architectural Overview
+## How It Works
 
-### System Topology
+Traditional Twitter bots send web requests to Twitter's official developer API. Twitter now charges a minimum of $100/month for write access, making hobby and personal bots expensive.
 
-The server implements the Model Context Protocol over the standard input/output (stdio) transport. When an AI client invokes a tool, the request flows through input validation, a serialized pacing queue to prevent velocity anomalies, and a Playwright browser engine attached to an authenticated Twitter web context.
+This MCP server takes a different approach:
 
-```mermaid
-flowchart TD
-    subgraph ClientLayer["AI Client Layer"]
-        Agent["AI Assistant (Antigravity / Claude / Cursor)"]
-    end
-
-    subgraph ServerLayer["twitter-browser-mcp Process (stdio)"]
-        Server["MCP Server (@modelcontextprotocol/sdk)"]
-        Validator["Input & Schema Validator"]
-        RateLimiter["Mutex RateLimiter (2500ms Pacing Queue)"]
-        SessionMgr["BrowserSessionManager (Playwright)"]
-    end
-
-    subgraph TwitterLayer["Twitter / X Platform"]
-        CookieStore["Cookie Injector (auth_token, ct0)"]
-        DOMEngine["Web DOM Interaction (Compose, Search, Profile)"]
-        BackendPipeline["Twitter GraphQL & Media Ingestion Pipeline"]
-    end
-
-    Agent -- "JSON-RPC Tool Invocation" --> Server
-    Server --> Validator
-    Validator --> RateLimiter
-    RateLimiter --> SessionMgr
-    SessionMgr --> CookieStore
-    CookieStore --> DOMEngine
-    DOMEngine --> BackendPipeline
-    BackendPipeline -- "DOM & Network Response" --> SessionMgr
-    SessionMgr -- "Structured JSON Output" --> Server
-    Server -- "Tool Execution Result" --> Agent
+```text
+[ Your AI Assistant ]
+       |  (Speaks standard MCP protocol via stdio)
+       v
+[ twitter-browser-mcp Server ]
+       |  (Controls browser with Playwright)
+       v
+[ Headless Chromium (In Memory) ]
+       |  (Injects your session cookies: auth_token & ct0)
+       v
+[ https://x.com ]
+       |  (Posts, searches, and inspects profiles directly on the site)
+       v
+[ Live Twitter Feed ]
 ```
 
-### Media Processing Pipeline
-
-Uploading videos requires asynchronous handling. Unlike static images, Twitter processes videos through a multi-stage chunked pipeline (`upload2.json`). The server intercepts and monitors upload events before triggering the post action.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Server as MCP Server Core
-    participant Browser as Playwright Context
-    participant DOM as Twitter Web Client
-    participant API as Twitter Backend (upload2.json)
-
-    Server->>Browser: Set file paths on input[data-testid="fileInput"]
-    Browser->>API: POST command=INIT (chunked allocation)
-    API-->>Browser: HTTP 200 (media_id assigned)
-    Browser->>API: POST command=APPEND (binary segments)
-    API-->>Browser: HTTP 200 (segments acknowledged)
-    Browser->>API: POST command=FINALIZE
-    API-->>Browser: HTTP 200 (processing_info returned)
-
-    alt Video Processing Required
-        loop While state == 'in_progress' or 'pending'
-            Browser->>API: GET command=STATUS (media_id)
-            API-->>Browser: HTTP 200 (progress_percent, check_after_secs)
-            Server->>Server: Wait check_after_secs interval
-        end
-    end
-
-    DOM->>DOM: Enable submit button ([data-testid="tweetButtonInline"])
-    Server->>DOM: Click submit button
-    DOM->>API: POST GraphQL / CreateTweet
-    API-->>DOM: HTTP 200 (Tweet Created)
-    DOM-->>Server: Detect Toast Notification & Status Permalink
-    Server-->>Server: Return tweet_id and tweet_url to AI Client
-```
+Because it uses your real login cookies inside a genuine Chromium browser engine, Twitter treats the session as regular web browsing. You can post text, attach photos, upload videos, and search recent posts completely free.
 
 ---
 
-## Prerequisites
+## What Account Details Do You Need?
 
-Before installing the server, ensure the following tools are installed on your machine:
+You do **not** need passwords, phone numbers, or developer API credentials.
 
-1. **Node.js**: Version 18.0.0 or higher (Node.js 20 LTS or Node.js 22 LTS recommended).
-   - Check with: `node -v`
-2. **npm**: Version 9.0.0 or higher.
-   - Check with: `npm -v`
-3. **Google Chrome, Brave, or Chromium**: Installed locally to generate and export session cookies.
-4. **Git**: Installed locally.
+You only need **two session cookies** from your browser:
+
+| Cookie Name | What It Is | Example Format |
+|---|---|---|
+| `auth_token` | Your authenticated user session token | 40-character hexadecimal string (e.g., `a1b2c3d4e5f6...`) |
+| `ct0` | Your Cross-Site Request Forgery (CSRF) token | 160-character alphanumeric string |
+
+When you export cookies from x.com, both of these values are included automatically in the resulting JSON file.
 
 ---
 
-## Step-by-Step Cookie Extraction Guide
+## How to Extract Your Cookies (Step-by-Step)
 
-The server authenticates via your active web session using two primary cookies:
-- `auth_token`: A 40-character hexadecimal string representing your authenticated user session.
-- `ct0`: The Cross-Site Request Forgery (CSRF) protection token.
+### Method 1: Fast Export Using a Browser Extension (Recommended)
 
-Choose either Method A or Method B below to extract these cookies.
+This is the easiest and fastest method.
 
-### Method A: Using Chrome / Brave Developer Tools (Manual)
+1. Open your browser (Google Chrome, Brave, Edge, or Firefox) and make sure you are logged into [https://x.com](https://x.com).
+2. Install a cookie export extension from your browser web store:
+   - **Cookie-Editor** (by cgagnier)
+   - or **Export Cookies JSON**
+3. While looking at any page on `https://x.com`, click the extension icon in your browser toolbar.
+4. Click **Export**, then select **Export as JSON**.
+5. Save the file to your computer. A great standard location is:
+   - macOS: `/Users/<YOUR_USERNAME>/Downloads/x_com_cookies.json`
+   - Windows: `C:\Users\<YOUR_USERNAME>\Downloads\x_com_cookies.json`
+   - Linux: `/home/<YOUR_USERNAME>/.config/x_com_cookies.json`
 
-1. Open your browser and navigate to [https://x.com](https://x.com). Ensure you are logged into the account you intend to use.
-2. Open Developer Tools:
-   - macOS: Press `Option + Command + I`
-   - Windows / Linux: Press `F12` or `Ctrl + Shift + I`
-3. Navigate to the **Application** tab at the top of the Developer Tools window. (If hidden, click the `>>` icon to reveal more tabs).
-4. In the left sidebar, expand the **Storage** section.
-5. Expand the **Cookies** item and select `https://x.com`.
-6. Locate the rows named `auth_token` and `ct0` in the cookie table.
-7. Create a file on your local disk at `~/Downloads/x_com_cookies.json` (or any persistent location of your choice) with the following JSON structure, replacing the values with the exact strings copied from the table:
+---
+
+### Method 2: Manual Export Using Browser Developer Tools
+
+If you prefer not to install browser extensions, you can copy the values directly from your browser:
+
+1. Open [https://x.com](https://x.com) in Chrome or Brave while logged in.
+2. Press `Option + Command + I` (on macOS) or `F12` (on Windows/Linux) to open Developer Tools.
+3. Click the **Application** tab across the top bar. (If you do not see it, click the double arrow `>>` to view more tabs).
+4. In the left panel, find **Storage**, click the arrow next to **Cookies**, and click on `https://x.com`.
+5. In the table that appears on the right:
+   - Find the row named `auth_token` and double-click its value to copy it.
+   - Find the row named `ct0` and double-click its value to copy it.
+6. Create a new text file named `x_com_cookies.json` on your computer and paste the following structure:
 
 ```json
 [
   {
     "name": "auth_token",
-    "value": "PASTE_YOUR_AUTH_TOKEN_VALUE_HERE",
+    "value": "YOUR_AUTH_TOKEN_VALUE_HERE",
     "domain": ".x.com",
     "path": "/",
     "secure": true,
@@ -160,7 +129,7 @@ Choose either Method A or Method B below to extract these cookies.
   },
   {
     "name": "ct0",
-    "value": "PASTE_YOUR_CT0_VALUE_HERE",
+    "value": "YOUR_CT0_VALUE_HERE",
     "domain": ".x.com",
     "path": "/",
     "secure": true,
@@ -169,53 +138,38 @@ Choose either Method A or Method B below to extract these cookies.
 ]
 ```
 
-### Method B: Using a Browser Extension (One-Click JSON Export)
-
-1. Install a cookie export extension in your browser, such as:
-   - **Export Cookies JSON** (Available in Chrome Web Store)
-   - **Cookie-Editor**
-2. Navigate to [https://x.com](https://x.com).
-3. Click the extension icon in your browser toolbar while on the active `x.com` tab.
-4. Select **Export as JSON**.
-5. Save the resulting file to your local computer:
-   - Suggested path on macOS: `/Users/<YOUR_USERNAME>/Downloads/x_com_cookies.json`
-   - Suggested path on Linux: `/home/<YOUR_USERNAME>/.config/twitter/x_com_cookies.json`
-   - Suggested path on Windows: `C:\Users\<YOUR_USERNAME>\Downloads\x_com_cookies.json`
-
 ---
 
 ## Installation and Build
 
-### 1. Clone the Repository
+### Step 1: Clone the Repository
 
 ```bash
 git clone https://github.com/sparsh101sparsh/twitter-browser-mcp.git
 cd twitter-browser-mcp
 ```
 
-### 2. Install Dependencies
+### Step 2: Install Node Dependencies
 
 ```bash
 npm install
 ```
 
-### 3. Install Playwright Browser Binaries
+### Step 3: Download the Playwright Chromium Engine
 
-Playwright requires Chromium binaries to execute headless browser interactions. Run:
+Playwright needs its headless browser binary to run. Install it with one command:
 
 ```bash
 npx playwright install chromium
 ```
 
-### 4. Compile TypeScript
-
-Compile the TypeScript source files in `src/` into executable JavaScript in `build/`:
+### Step 4: Build the Project
 
 ```bash
 npm run build
 ```
 
-Verify that `build/index.js` exists and is marked executable:
+This compiles TypeScript in `src/` to `build/index.js`. Verify the file is ready:
 
 ```bash
 ls -la build/index.js
@@ -223,11 +177,11 @@ ls -la build/index.js
 
 ---
 
-## Client Configuration
+## Client Setup Guides
 
-To connect this MCP server to an AI client, add an entry to the client's configuration file pointing to the compiled `build/index.js` file.
+Configure your favorite AI agent or editor to connect to the server. Replace `/ABSOLUTE/PATH/TO/twitter-browser-mcp` with the real path on your machine where you cloned the repository.
 
-### 1. Configuration for Google Antigravity
+### 1. Setup in Google Antigravity
 
 Open or create `~/.gemini/config/mcp_config.json`:
 
@@ -237,26 +191,29 @@ Open or create `~/.gemini/config/mcp_config.json`:
     "twitter": {
       "command": "node",
       "args": [
-        "/ABSOLUTE/PATH/TO/twitter-browser-mcp/build/index.js"
+        "/Users/yourusername/teamwork_projects/twitter_browser_mcp/build/index.js"
       ],
       "env": {
         "TWITTER_COOKIES_PATH": "/Users/yourusername/Downloads/x_com_cookies.json",
-        "HEADLESS": "true",
-        "TWITTER_PACING_MS": "2500"
+        "HEADLESS": "true"
       }
     }
   }
 }
 ```
 
-### 2. Configuration for Claude Desktop
+Antigravity detects the change and registers the tools immediately.
+
+---
+
+### 2. Setup in Claude Desktop
 
 Locate your Claude Desktop configuration file:
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 - **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
-Add the server to the `mcpServers` object:
+Add the server under `mcpServers`:
 
 ```json
 {
@@ -267,236 +224,261 @@ Add the server to the `mcpServers` object:
         "/ABSOLUTE/PATH/TO/twitter-browser-mcp/build/index.js"
       ],
       "env": {
-        "TWITTER_COOKIES_PATH": "/Users/yourusername/Downloads/x_com_cookies.json",
-        "HEADLESS": "true",
-        "TWITTER_PACING_MS": "2500"
+        "TWITTER_COOKIES_PATH": "/ABSOLUTE/PATH/TO/x_com_cookies.json",
+        "HEADLESS": "true"
       }
     }
   }
 }
 ```
 
-After updating the file, completely quit and restart Claude Desktop.
-
-### 3. Configuration for Cursor IDE
-
-In Cursor, navigate to **Settings** -> **Features** -> **MCP Servers** -> **Add New MCP Server**:
-- **Name**: `twitter`
-- **Type**: `command`
-- **Command**: `node /ABSOLUTE/PATH/TO/twitter-browser-mcp/build/index.js`
-
-Add the environment variables in the Cursor environment settings:
-- `TWITTER_COOKIES_PATH`: `/ABSOLUTE/PATH/TO/x_com_cookies.json`
-- `HEADLESS`: `true`
-
-### 4. Configuration for Windsurf / Generic Stdio Clients
-
-Windsurf and other MCP-compliant clients read stdio servers directly. Point the client to:
-
-- **Executable**: `node`
-- **Arguments**: `["/ABSOLUTE/PATH/TO/twitter-browser-mcp/build/index.js"]`
-- **Environment**:
-  - `TWITTER_COOKIES_PATH=/ABSOLUTE/PATH/TO/x_com_cookies.json`
-  - `HEADLESS=true`
+Restart Claude Desktop completely. You will see the hammer tool icon appear in chat.
 
 ---
 
-## MCP Tools Reference
+### 3. Setup in Cursor IDE
 
-The server exposes three standard tools over stdio.
+1. Open Cursor Settings (`Cmd + ,` on macOS or `Ctrl + ,` on Windows).
+2. Go to **Features** -> **MCP Servers**.
+3. Click **Add New MCP Server**.
+4. Fill in the fields:
+   - **Name**: `twitter`
+   - **Type**: `command`
+   - **Command**: `node /ABSOLUTE/PATH/TO/twitter-browser-mcp/build/index.js`
+5. In the environment variables section, add:
+   - Key: `TWITTER_COOKIES_PATH`, Value: `/ABSOLUTE/PATH/TO/x_com_cookies.json`
+   - Key: `HEADLESS`, Value: `true`
 
-### Tool: `post_tweet`
+---
 
-Publishes a new post to Twitter / X with optional media attachments.
+### 4. Setup in OpenAI Codex / Custom Agent Runners
 
-#### Input Schema
+For agent environments using the official MCP Python SDK, Node SDK, or subprocess runners:
+
+```python
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+server_params = StdioServerParameters(
+    command="node",
+    args=["/ABSOLUTE/PATH/TO/twitter-browser-mcp/build/index.js"],
+    env={
+        "TWITTER_COOKIES_PATH": "/ABSOLUTE/PATH/TO/x_com_cookies.json",
+        "HEADLESS": "true"
+    }
+)
+
+async with stdio_client(server_params) as (read, write):
+    async with ClientSession(read, write) as session:
+        await session.initialize()
+        tools = await session.list_tools()
+        print("Connected tools:", [t.name for t in tools.tools])
+```
+
+---
+
+### 5. Setup in Windsurf
+
+Open your Windsurf global configuration (`~/.codeium/windsurf/mcp_config.json`):
+
 ```json
 {
-  "type": "object",
-  "properties": {
-    "text": {
-      "type": "string",
-      "description": "Content of the post (up to 280 characters by default)."
-    },
-    "media_paths": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "List of local absolute file paths to attach."
-    },
-    "allow_long_tweet": {
-      "type": "boolean",
-      "description": "Set to true if account has X Premium allowing longer text."
+  "mcpServers": {
+    "twitter": {
+      "command": "node",
+      "args": [
+        "/ABSOLUTE/PATH/TO/twitter-browser-mcp/build/index.js"
+      ],
+      "env": {
+        "TWITTER_COOKIES_PATH": "/ABSOLUTE/PATH/TO/x_com_cookies.json",
+        "HEADLESS": "true"
+      }
     }
   }
 }
 ```
 
-#### Media Attachment Rules
-- **Static Images**: Up to 4 files (`.png`, `.jpg`, `.jpeg`, `.webp`).
-- **Videos**: Exactly 1 video file (`.mp4`, `.mov`).
-- **GIFs**: Exactly 1 animated GIF file (`.gif`).
-- **Constraint**: GIFs cannot be combined with static images or videos.
-- **Empty Files**: Zero-byte files are rejected automatically before browser injection.
+---
 
-#### Example Invocations
+## Available Tools and How to Use Them
 
-**Text-only Post:**
+### 1. `post_tweet`
+
+Posts a new message to Twitter / X, with optional attachments.
+
 ```json
 {
-  "text": "Announcing our new open-source MCP server for automated browser workflows."
-}
-```
-
-**Post with Video Attachment:**
-```json
-{
-  "text": "Check out this demonstration of automated video ingestion on X.",
+  "text": "Hello world! This post was sent from my local AI assistant.",
   "media_paths": [
-    "/Users/yourusername/Movies/project_demo.mp4"
+    "/Users/yourusername/Movies/demo.mp4"
   ]
 }
 ```
 
-**Output Structure:**
-```json
-{
-  "status": "success",
-  "message": "Tweet posted successfully",
-  "tweet_url": "https://x.com/i/status/2106903737788965355",
-  "tweet_id": "2106903737788965355",
-  "text": "Announcing our new open-source MCP server for automated browser workflows.",
-  "media_count": 0
-}
-```
+#### Media Upload Rules
+- **Static Images**: Up to 4 files (`.png`, `.jpg`, `.jpeg`, `.webp`).
+- **Video**: Exactly 1 file (`.mp4`, `.mov`). The server automatically waits for backend video transcoding before clicking Post.
+- **GIF**: Exactly 1 animated GIF (`.gif`). Twitter does not allow mixing GIFs with other media.
+- **Zero-Byte Files**: Empty files are automatically rejected before touching the browser.
 
 ---
 
-### Tool: `search_tweets`
+### 2. `search_tweets`
 
-Executes keyword, hashtag, or phrase searches on public Twitter feeds.
+Searches recent public posts on Twitter by keyword or hashtag.
 
-#### Input Schema
 ```json
 {
-  "type": "object",
-  "properties": {
-    "query": {
-      "type": "string",
-      "description": "Search keyword, hashtag, or query string."
-    },
-    "limit": {
-      "type": "number",
-      "description": "Number of tweets to retrieve (default: 10, maximum: 50)."
-    },
-    "mode": {
-      "type": "string",
-      "enum": ["live", "top"],
-      "description": "Filter by latest real-time tweets ('live') or top ranked tweets ('top')."
-    }
-  },
-  "required": ["query"]
-}
-```
-
-#### Example Invocation
-```json
-{
-  "query": "ModelContextProtocol",
+  "query": "#AIagents",
   "limit": 10,
   "mode": "live"
 }
 ```
 
+- `limit`: Number of results to return (default 10, maximum safe limit is 50).
+- `mode`: `"live"` for real-time posts, or `"top"` for high-engagement posts.
+
 ---
 
-### Tool: `get_profile`
+### 3. `get_profile`
 
-Scrapes public profile information and metadata for a specified handle.
+Reads public profile metadata for any Twitter handle.
 
-#### Input Schema
 ```json
 {
-  "type": "object",
-  "properties": {
-    "username": {
-      "type": "string",
-      "description": "Twitter handle with or without the leading '@' symbol."
-    }
-  },
-  "required": ["username"]
+  "username": "issparssh"
 }
 ```
 
-#### Example Output Structure
-```json
-{
-  "username": "issparssh",
-  "name": "sparsh",
-  "handle": "@issparssh",
-  "bio": "https://sparsh.is-a.dev",
-  "following": "175",
-  "followers": "34",
-  "joined": "Joined June 2026",
-  "verified": true,
-  "profile_url": "https://x.com/issparssh"
-}
+Returns structured details including display name, bio, following count, follower count, join date, and verification status.
+
+---
+
+## System Architecture and Workflow Diagrams
+
+### High-Level Request Architecture
+
+```mermaid
+flowchart TD
+    subgraph ClientLayer["AI Client Layer"]
+        A["Agent (Claude / Antigravity / Cursor / Codex)"]
+    end
+
+    subgraph ServerLayer["twitter-browser-mcp (stdio process)"]
+        B["MCP Protocol Server"]
+        C["Input & File Validator"]
+        D["RateLimiter (Serialized Queue)"]
+        E["Playwright Engine"]
+    end
+
+    subgraph BrowserLayer["Headless Chromium Context"]
+        F["Cookie Injector (auth_token & ct0)"]
+        G["Page Controller (x.com)"]
+    end
+
+    subgraph PlatformLayer["Twitter / X Platform"]
+        H["Compose Interface"]
+        I["Media Pipeline (upload2.json)"]
+        J["Search & Profile DOM"]
+    end
+
+    A -- "Tool Request" --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    G --> H
+    H --> I
+    G --> J
+    J -- "Scraped Results" --> E
+    I -- "Upload Confirmation" --> E
+    E -- "JSON Response" --> B
+    B -- "Tool Output" --> A
 ```
 
 ---
 
-## Environment Variables Reference
+### Video and Media Upload Lifecycle
 
-| Variable Name | Type | Default Value | Description |
-|---|---|---|---|
-| `TWITTER_COOKIES_PATH` | string | `~/Downloads/x_com_cookies.json` | Absolute path to the exported JSON cookie file. |
-| `HEADLESS` | boolean | `true` | When `true`, runs Chromium without a visible window. Set to `false` to view browser actions. |
-| `TWITTER_PACING_MS` | number | `2500` | Minimum enforced delay in milliseconds between consecutive automated actions. |
-| `TWITTER_DEBUG` | boolean | `false` | Enables verbose diagnostic output for DOM and network request tracing. |
+Handling video uploads requires waiting for Twitter's backend servers to transcode the video. The server monitors upload events automatically:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Server as MCP Server
+    participant Playwright as Headless Browser
+    participant DOM as Twitter Compose Box
+    participant API as Twitter Media API (upload2.json)
+
+    Server->>Playwright: Attach file path to hidden file input
+    Playwright->>API: POST command=INIT (Allocates media ID)
+    API-->>Playwright: Returns media_id
+    Playwright->>API: POST command=APPEND (Sends video chunks)
+    API-->>Playwright: Returns HTTP 200 OK
+    Playwright->>API: POST command=FINALIZE
+    API-->>Playwright: Returns processing_info (state: in_progress)
+
+    loop Every check_after_secs interval
+        Playwright->>API: GET command=STATUS
+        API-->>Playwright: Returns processing state (progress_percent)
+    end
+
+    API-->>Playwright: Returns processing state (state: succeeded)
+    DOM->>DOM: Enable Post button
+    Playwright->>DOM: Click Post button
+    DOM->>API: CreateTweet GraphQL Call
+    API-->>DOM: Tweet Created
+    DOM-->>Server: Capture Tweet URL and ID
+```
 
 ---
 
-## Account Safety and Anti-Ban Hygiene
+### Rate Limiter and Anti-Bot Pacing Queue
 
-Automating Twitter interactions without official API keys carries inherent detection risks. The server implements defense-in-depth mechanisms based on the `twitter-safe-use` standard:
+To keep your account safe, requests do not execute in immediate bursts. They flow through a serialized queue:
 
-1. **Velocity Defense**: The internal `RateLimiter` enforces serialized execution. Even if multiple tools are called concurrently by an agent, requests are queued with a minimum 2500ms separation.
-2. **Hard Search Caps**: Search pagination is clamped at 50 results maximum. Deep scraping is explicitly prevented.
-3. **Fail-Fast on Checkpoints**: If Twitter detects an anomaly and redirects to:
-   - `/account/access`
-   - `/account/login_challenge`
-   - `/i/flow/two-factor-auth`
-   - Arkose Captcha (`iframe[src*="arkoselabs"]`)
-   
-   The server immediately terminates the action and returns an explicit safety alert. **The server will never attempt to programmatically bypass a challenge or captcha.**
-4. **Credential Isolation**: Session cookies are maintained strictly in memory and are filtered out of error logs, diagnostic outputs, and tool responses.
+```mermaid
+flowchart LR
+    A["Tool Request 1"] --> Q["Serialized Pacing Queue"]
+    B["Tool Request 2"] --> Q
+    C["Tool Request 3"] --> Q
+    Q --> D["Wait 2500ms Pacing Gap"]
+    D --> E["Execute Browser Action"]
+    E --> F["Record Completed Timestamp"]
+    F --> G["Release Lock to Next Action"]
+```
 
-### Antigravity Safe-Use Skill
+---
 
-This repository includes a ready-to-use Antigravity / AI Agent skill located in [`skills/twitter-safe-use/SKILL.md`](skills/twitter-safe-use/SKILL.md).
+## Keeping Your Account Safe (Anti-Ban Rules)
 
-To install this skill directly into your Antigravity environment:
+Because this tool automates a browser, following simple hygiene rules ensures your account remains active and unflagged:
+
+1. **Human Pacing**: The server enforces a **2500ms minimum delay** between actions. Do not remove this delay.
+2. **Search Limits**: Keep searches under **50 results**. Do not paginate deeply through hundreds of pages.
+3. **No Automated Spurt Posting**: Limit automated tweets to normal human publishing behavior (1 to 2 posts per session).
+4. **Immediate Stop on Security Checkpoints**: If Twitter ever prompts for an Arkose Captcha, SMS code, or email verification, the server stops immediately. **Never try to script past a captcha.** Solve it manually in a real browser, re-export your cookies, and resume.
+
+### The Included Antigravity Skill
+
+This repository includes a pre-built Antigravity / AI Agent skill in [`skills/twitter-safe-use/SKILL.md`](skills/twitter-safe-use/SKILL.md).
+
+To install it into your Antigravity environment:
 
 ```bash
-# User-level Antigravity skills directory
 mkdir -p ~/.gemini/antigravity/skills/twitter-safe-use
 cp skills/twitter-safe-use/SKILL.md ~/.gemini/antigravity/skills/twitter-safe-use/SKILL.md
-
-# Global configuration skills directory
-mkdir -p ~/.gemini/config/skills/twitter-safe-use
-cp skills/twitter-safe-use/SKILL.md ~/.gemini/config/skills/twitter-safe-use/SKILL.md
 ```
-
-Once installed, AI agents automatically apply strict pacing limits, read-only defaults, and fail-fast procedures whenever interacting with Twitter / X.
 
 ---
 
 ## Verification and Testing
 
-The repository contains an automated test suite verifying protocol compliance, input validation, rate limiting, and cookie normalization:
-
-### Run Unit and Protocol Tests (39 Tests across 6 Suites)
+Run the included automated test suite to confirm your installation:
 
 ```bash
+# Run the 39 unit and protocol tests
 npm run test:unit
 ```
 
@@ -515,38 +497,34 @@ Expected output:
 ℹ fail 0
 ```
 
-### Run Live End-to-End Verification
-
-To verify that the server connects to live Twitter using your extracted cookies:
+To run a live test using your real cookies without posting:
 
 ```bash
 npm run test:e2e
 ```
 
-This script performs a live profile extraction and search query against `x.com` to confirm session validity without modifying your account.
-
 ---
 
-## Troubleshooting and Diagnostic Runbook
+## Troubleshooting Guide
 
-### Issue 1: "Could not find required cookies: auth_token, ct0"
-- **Cause**: The JSON file does not contain the mandatory authentication tokens.
-- **Remedy**: Re-export cookies from an active, logged-in browser session on `https://x.com` and ensure both `auth_token` and `ct0` are present.
+### 1. "Could not find required cookies: auth_token, ct0"
+- **Cause**: The cookie JSON file does not contain your active session credentials.
+- **Solution**: Log into `https://x.com` in your browser and re-export the cookies. Ensure both `auth_token` and `ct0` are present in the JSON.
 
-### Issue 2: "Security challenge detected: /account/access"
-- **Cause**: Twitter flagged the session for identity verification (e.g., email or SMS confirmation).
-- **Remedy**: Do not retry via the automated server. Open `https://x.com` in a standard desktop browser, complete the verification manually, re-export fresh cookies, and resume.
+### 2. "Security challenge detected: /account/access"
+- **Cause**: Twitter flagged the session for standard identity verification (e.g. email or SMS code).
+- **Solution**: Do not retry via the automated server. Open `https://x.com` in your everyday browser, complete the security check manually, re-export fresh cookies, and restart.
 
-### Issue 3: "Browser closed unexpectedly or executable missing"
-- **Cause**: Playwright browser dependencies have not been installed.
-- **Remedy**: Run `npx playwright install chromium` in the repository directory.
+### 3. "Executable does not exist at ... chromium"
+- **Cause**: Playwright has not downloaded the Chromium browser binary yet.
+- **Solution**: Run `npx playwright install chromium` inside the project folder.
 
-### Issue 4: "Tweet exceeds 280 character limit"
-- **Cause**: The tweet body exceeds Twitter's standard length constraint.
-- **Remedy**: Shorten the text, or set `"allow_long_tweet": true` if your account subscribes to X Premium.
+### 4. "Tweet exceeds 280 character limit"
+- **Cause**: Twitter restricts free accounts to 280 characters.
+- **Solution**: Shorten your tweet text, or pass `"allow_long_tweet": true` if your account has an active X Premium subscription.
 
 ---
 
 ## License
 
-This project is licensed under the **MIT License**. See the `LICENSE` file for details.
+This project is licensed under the **MIT License**. Feel free to use, modify, and distribute it for personal and commercial projects.
