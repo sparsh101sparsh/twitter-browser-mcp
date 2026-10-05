@@ -33,6 +33,7 @@ The server operates via Playwright browser automation using local session cookie
    - [`get_profile`](#tool-get_profile)
 7. [Environment Variables Reference](#environment-variables-reference)
 8. [Account Safety and Anti-Ban Hygiene](#account-safety-and-anti-ban-hygiene)
+   - [Antigravity Safe-Use Skill (`skills/twitter-safe-use/`)](#antigravity-safe-use-skill)
 9. [Verification and Testing](#verification-and-testing)
 10. [Troubleshooting and Diagnostic Runbook](#troubleshooting-and-diagnostic-runbook)
 11. [License](#license)
@@ -468,6 +469,24 @@ Automating Twitter interactions without official API keys carries inherent detec
    
    The server immediately terminates the action and returns an explicit safety alert. **The server will never attempt to programmatically bypass a challenge or captcha.**
 4. **Credential Isolation**: Session cookies are maintained strictly in memory and are filtered out of error logs, diagnostic outputs, and tool responses.
+
+### Antigravity Safe-Use Skill
+
+This repository includes a ready-to-use Antigravity / AI Agent skill located in [`skills/twitter-safe-use/SKILL.md`](skills/twitter-safe-use/SKILL.md).
+
+To install this skill directly into your Antigravity environment:
+
+```bash
+# User-level Antigravity skills directory
+mkdir -p ~/.gemini/antigravity/skills/twitter-safe-use
+cp skills/twitter-safe-use/SKILL.md ~/.gemini/antigravity/skills/twitter-safe-use/SKILL.md
+
+# Global configuration skills directory
+mkdir -p ~/.gemini/config/skills/twitter-safe-use
+cp skills/twitter-safe-use/SKILL.md ~/.gemini/config/skills/twitter-safe-use/SKILL.md
+```
+
+Once installed, AI agents automatically apply strict pacing limits, read-only defaults, and fail-fast procedures whenever interacting with Twitter / X.
 
 ---
 
